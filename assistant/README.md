@@ -37,15 +37,36 @@ shared and never committed (the key file is gitignored).
    Prefer the command line? `./gradlew installDebug` (or `gradlew.bat
    installDebug` on Windows) with the phone connected.
 
+## Charging users — Google Play Billing
+
+Billing is wired up but **off by default** so the app just works while you
+develop. Turn it on when you're ready to sell:
+
+1. Create a Google Play **developer account** (one-time $25) and a new app.
+2. In Play Console → **Monetize → Subscriptions**, create a subscription and
+   note its **product ID** (e.g. `aria_premium`).
+3. In `local.properties` add:
+   ```properties
+   BILLING_ENABLED=true
+   SUB_PRODUCT_ID=aria_premium
+   ```
+4. Upload the app to a Play **test track** and test the purchase.
+
+When on, the app shows a **Subscribe** paywall until the user subscribes. The
+subscription is tied to their **Google account**, so if they delete and
+reinstall Aria, **their plan is restored automatically** (the "Restore" button
+re-checks too). You'll see **revenue and subscriber numbers right in the Play
+Console** — no server, login, or admin panel needed.
+
+> Note: the model API key is still hardcoded in this build (see above). Because
+> a determined user can extract it, the most robust setup for a public release
+> is to also move the key behind a tiny server — but that's optional and can come
+> later.
+
 ## Notes
 
-- **Keep this build private.** A hardcoded key can be extracted from the APK,
-  so don't distribute it. For a public/paid release, leave `anthropic_api_key`
-  empty and set `backend_url` to a server that holds the key and checks the
-  subscription — then the app ships with no key.
 - **Model:** defaults to `claude-haiku-4-5` (fast + cheap, ideal for a phone
-  assistant). Change `anthropic_model` to `claude-sonnet-4-6` for harder
-  requests.
+  assistant). Set `ANTHROPIC_MODEL=claude-sonnet-4-6` for harder requests.
 - **Permissions:** on first run, grant SMS / phone / contacts / mic so the
   assistant can text, call, and listen.
 

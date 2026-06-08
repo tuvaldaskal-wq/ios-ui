@@ -33,8 +33,24 @@ public final class BuildConfig {
     public static final String ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY:-}";
     public static final String ANTHROPIC_MODEL = "${ANTHROPIC_MODEL:-claude-haiku-4-5}";
     public static final String BACKEND_URL = "${BACKEND_URL:-}";
-    public static final String SUPABASE_URL = "${SUPABASE_URL:-}";
-    public static final String SUPABASE_ANON_KEY = "${SUPABASE_ANON_KEY:-}";
+    public static final boolean BILLING_ENABLED = ${BILLING_ENABLED:-false};
+    public static final String SUB_PRODUCT_ID = "${SUB_PRODUCT_ID:-aria_premium}";
+}
+EOF
+
+# Play Billing isn't resolvable offline, so compile a stub Billing here and skip
+# the real one. (Android Studio uses the real Billing.java + the billing library.)
+cat > "$BUILD/gen/com/aiassistant/Billing.java" <<'EOF'
+package com.aiassistant;
+import android.app.Activity;
+public class Billing {
+    public interface Listener { void onSubscriptionChanged(boolean subscribed); }
+    public static boolean enabled() { return BuildConfig.BILLING_ENABLED; }
+    public Billing(Activity activity, Listener listener) { }
+    public void start() { }
+    public void refresh() { }
+    public void subscribe() { }
+    public void destroy() { }
 }
 EOF
 
@@ -58,7 +74,9 @@ echo "==> [2/6] aapt2 link"
     "$BUILD/compiled/res.zip"
 
 echo "==> [3/6] javac"
-SRCS=$(find "$APP/java" "$BUILD/gen" -name '*.java')
+# Real Billing.java (needs the Play Billing lib) is excluded from src; the stub
+# generated above in gen/ is included instead.
+SRCS="$(find "$APP/java" -name '*.java' ! -name 'Billing.java') $(find "$BUILD/gen" -name '*.java')"
 javac --release 8 -XDstringConcat=inline -encoding UTF-8 \
     -classpath "$ANDROID_JAR" -d "$BUILD/classes" $SRCS
 

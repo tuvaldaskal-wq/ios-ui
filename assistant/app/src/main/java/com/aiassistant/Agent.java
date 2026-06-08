@@ -64,7 +64,6 @@ public class Agent {
 
     private void runLoop(Listener listener) {
         try {
-            client.setAuthToken(SupabaseAuth.getToken(appContext));
             for (int step = 0; step < 6; step++) {
                 JSONObject resp = client.createMessage(history, Tools.schemas(), SYSTEM);
                 if (resp.has("__http_error")) {

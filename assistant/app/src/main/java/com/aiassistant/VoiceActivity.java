@@ -14,6 +14,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.util.ArrayList;
@@ -35,20 +36,33 @@ public class VoiceActivity extends Activity {
     private SpeechRecognizer recognizer;
     private boolean listening;
 
+    private FrameLayout root;
+    private Billing billing;
+    private View paywall;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Require sign-in if a Supabase backend is configured.
-        if (Supabase.isConfigured(this) && SupabaseAuth.getToken(this) == null) {
-            startActivity(new Intent(this, AuthActivity.class));
-            finish();
-            return;
-        }
-
         config = new Config(this);
         agent = new Agent(this, config);
         setContentView(buildUi());
+
+        // Google Play subscription gate (off during dev; restores automatically).
+        if (Billing.enabled()) {
+            showPaywall();
+            billing = new Billing(this, new Billing.Listener() {
+                @Override
+                public void onSubscriptionChanged(boolean subscribed) {
+                    if (subscribed) {
+                        hidePaywall();
+                    } else {
+                        showPaywall();
+                    }
+                }
+            });
+            billing.start();
+        }
 
         tts = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
             @Override
@@ -109,7 +123,7 @@ public class VoiceActivity extends Activity {
     }
 
     private View buildUi() {
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         root.setFitsSystemWindows(true);
 
@@ -301,6 +315,89 @@ public class VoiceActivity extends Activity {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Subscription paywall
+    // ------------------------------------------------------------------
+
+    private void showPaywall() {
+        if (paywall != null) {
+            return;
+        }
+        LinearLayout p = new LinearLayout(this);
+        p.setOrientation(LinearLayout.VERTICAL);
+        p.setGravity(Gravity.CENTER);
+        p.setBackgroundColor(Color.parseColor("#F2000000"));
+        p.setClickable(true);
+        p.setPadding(dp(32), dp(32), dp(32), dp(32));
+
+        View orbIcon = new View(this);
+        orbIcon.setBackgroundResource(R.drawable.orb);
+        LinearLayout.LayoutParams oi = new LinearLayout.LayoutParams(dp(84), dp(84));
+        oi.bottomMargin = dp(20);
+        p.addView(orbIcon, oi);
+
+        TextView title = new TextView(this);
+        title.setText("Aria Premium");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(26f);
+        title.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        title.setGravity(Gravity.CENTER);
+        p.addView(title);
+
+        TextView desc = new TextView(this);
+        desc.setText("Subscribe to unlock your AI assistant.\nYour plan stays on your "
+                + "Google account, so it's restored automatically if you reinstall.");
+        desc.setTextColor(Color.parseColor("#B3FFFFFF"));
+        desc.setTextSize(14f);
+        desc.setGravity(Gravity.CENTER);
+        desc.setPadding(0, dp(10), 0, dp(26));
+        p.addView(desc);
+
+        TextView subscribe = new TextView(this);
+        subscribe.setText("Subscribe");
+        subscribe.setTextColor(Color.WHITE);
+        subscribe.setTextSize(17f);
+        subscribe.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+        subscribe.setGravity(Gravity.CENTER);
+        subscribe.setBackgroundResource(R.drawable.send_button);
+        subscribe.setPadding(dp(48), dp(15), dp(48), dp(15));
+        subscribe.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (billing != null) {
+                    billing.subscribe();
+                }
+            }
+        });
+        p.addView(subscribe);
+
+        TextView restore = new TextView(this);
+        restore.setText("Restore");
+        restore.setTextColor(Color.parseColor("#99FFFFFF"));
+        restore.setTextSize(14f);
+        restore.setPadding(dp(16), dp(18), dp(16), dp(8));
+        restore.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (billing != null) {
+                    billing.refresh();
+                }
+            }
+        });
+        p.addView(restore);
+
+        paywall = p;
+        root.addView(paywall, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void hidePaywall() {
+        if (paywall != null) {
+            root.removeView(paywall);
+            paywall = null;
+        }
+    }
+
     @Override
     protected void onDestroy() {
         if (tts != null) {
@@ -311,6 +408,9 @@ public class VoiceActivity extends Activity {
                 recognizer.destroy();
             } catch (Exception ignored) {
             }
+        }
+        if (billing != null) {
+            billing.destroy();
         }
         super.onDestroy();
     }
