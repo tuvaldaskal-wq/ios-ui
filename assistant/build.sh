@@ -35,6 +35,8 @@ public final class BuildConfig {
     public static final String BACKEND_URL = "${BACKEND_URL:-}";
     public static final boolean BILLING_ENABLED = ${BILLING_ENABLED:-false};
     public static final String SUB_PRODUCT_ID = "${SUB_PRODUCT_ID:-aria_premium}";
+    public static final String SUPABASE_URL = "${SUPABASE_URL:-}";
+    public static final String SUPABASE_ANON_KEY = "${SUPABASE_ANON_KEY:-}";
 }
 EOF
 

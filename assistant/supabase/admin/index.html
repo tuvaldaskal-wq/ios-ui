@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Aria — Admin</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; font-family: system-ui, sans-serif; background:#0A0E24; color:#fff; }
+  header { padding:18px 24px; font-size:20px; font-weight:700;
+           background:linear-gradient(135deg,#2E6CFF,#7C3AED); }
+  main { padding:24px; max-width:1100px; margin:0 auto; }
+  .card { background:#141a3a; border:1px solid #ffffff1a; border-radius:14px;
+          padding:18px; margin-bottom:18px; }
+  input { background:#0b1030; border:1px solid #ffffff22; color:#fff;
+          padding:10px 12px; border-radius:10px; margin:4px 6px 4px 0; }
+  button { background:#3B82F6; color:#fff; border:0; padding:10px 16px;
+           border-radius:10px; cursor:pointer; font-weight:600; }
+  table { width:100%; border-collapse:collapse; }
+  th,td { text-align:left; padding:10px 8px; border-bottom:1px solid #ffffff14; font-size:14px; }
+  th { color:#9fb0ff; }
+  tr.user-row { cursor:pointer; }
+  tr.user-row:hover { background:#ffffff0a; }
+  .muted { color:#ffffff80; font-size:13px; }
+  .bubble { padding:8px 12px; border-radius:12px; margin:6px 0; max-width:80%; }
+  .u { background:#2E6CFF; margin-left:auto; }
+  .a { background:#ffffff14; }
+  .total { font-size:22px; font-weight:700; }
+</style>
+</head>
+<body>
+<header>Aria · Admin</header>
+<main>
+  <!-- 1) Fill these in with your Supabase project values -->
+  <script>
+    const SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";
+    const SUPABASE_ANON_KEY = "YOUR-ANON-KEY";
+  </script>
+
+  <div class="card" id="loginCard">
+    <h3>Admin sign-in</h3>
+    <p class="muted">Use the account you marked <code>is_admin = true</code>.</p>
+    <input id="email" placeholder="email" type="email" />
+    <input id="password" placeholder="password" type="password" />
+    <button onclick="login()">Sign in</button>
+    <div id="loginErr" class="muted"></div>
+  </div>
+
+  <div id="app" style="display:none">
+    <div class="card">
+      <div class="total" id="revenue">$0.00</div>
+      <div class="muted">total revenue · <span id="apiCost">$0.00</span> your API cost ·
+        <span id="userCount">0</span> users</div>
+    </div>
+    <div class="card">
+      <h3>Users</h3>
+      <table>
+        <thead><tr><th>Email</th><th>Plan</th><th>Messages</th>
+          <th>Paid</th><th>API cost</th></tr></thead>
+        <tbody id="users"></tbody>
+      </table>
+    </div>
+    <div class="card" id="chatCard" style="display:none">
+      <h3 id="chatTitle">Conversation</h3>
+      <div id="chat"></div>
+    </div>
+  </div>
+</main>
+
+<script type="module">
+  import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+  const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  window.sb = sb;
+
+  window.login = async () => {
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) { document.getElementById("loginErr").textContent = error.message; return; }
+    document.getElementById("loginCard").style.display = "none";
+    document.getElementById("app").style.display = "block";
+    load();
+  };
+
+  async function load() {
+    const [{ data: profiles }, { data: usage }, { data: payments }, { data: msgs }] =
+      await Promise.all([
+        sb.from("profiles").select("id,email,plan"),
+        sb.from("usage").select("user_id,cost_usd"),
+        sb.from("payments").select("user_id,amount_usd"),
+        sb.from("messages").select("user_id"),
+      ]);
+
+    const cost = {}, paid = {}, count = {};
+    (usage || []).forEach(u => cost[u.user_id] = (cost[u.user_id]||0) + Number(u.cost_usd));
+    (payments || []).forEach(p => paid[p.user_id] = (paid[p.user_id]||0) + Number(p.amount_usd));
+    (msgs || []).forEach(m => count[m.user_id] = (count[m.user_id]||0) + 1);
+
+    let totalRevenue = 0, totalCost = 0;
+    const tbody = document.getElementById("users");
+    tbody.innerHTML = "";
+    (profiles || []).forEach(p => {
+      totalRevenue += paid[p.id] || 0;
+      totalCost += cost[p.id] || 0;
+      const tr = document.createElement("tr");
+      tr.className = "user-row";
+      tr.innerHTML = `<td>${p.email||p.id}</td><td>${p.plan}</td>
+        <td>${count[p.id]||0}</td><td>$${(paid[p.id]||0).toFixed(2)}</td>
+        <td>$${(cost[p.id]||0).toFixed(4)}</td>`;
+      tr.onclick = () => viewChat(p);
+      tbody.appendChild(tr);
+    });
+    document.getElementById("revenue").textContent = "$" + totalRevenue.toFixed(2);
+    document.getElementById("apiCost").textContent = "$" + totalCost.toFixed(2);
+    document.getElementById("userCount").textContent = (profiles||[]).length;
+  }
+
+  async function viewChat(profile) {
+    const { data } = await sb.from("messages")
+      .select("role,content,created_at").eq("user_id", profile.id)
+      .order("created_at", { ascending: true }).limit(500);
+    document.getElementById("chatCard").style.display = "block";
+    document.getElementById("chatTitle").textContent = "Conversation · " + (profile.email||profile.id);
+    const c = document.getElementById("chat");
+    c.innerHTML = "";
+    (data || []).forEach(m => {
+      const d = document.createElement("div");
+      d.className = "bubble " + (m.role === "user" ? "u" : "a");
+      d.textContent = m.content;
+      c.appendChild(d);
+    });
+    document.getElementById("chatCard").scrollIntoView({ behavior: "smooth" });
+  }
+  window.viewChat = viewChat;
+</script>
+</body>
+</html>

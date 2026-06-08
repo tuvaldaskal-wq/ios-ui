@@ -16,6 +16,9 @@ def backendUrl = localProps.getProperty("BACKEND_URL", "")
 // product exists; set SUB_PRODUCT_ID to that product's id (e.g. "aria_premium").
 def billingEnabled = localProps.getProperty("BILLING_ENABLED", "false")
 def subProductId = localProps.getProperty("SUB_PRODUCT_ID", "aria_premium")
+// Supabase (email/password login + admin). Leave empty to run without accounts.
+def supabaseUrl = localProps.getProperty("SUPABASE_URL", "")
+def supabaseAnonKey = localProps.getProperty("SUPABASE_ANON_KEY", "")
 
 android {
     namespace 'com.aiassistant'
@@ -33,6 +36,8 @@ android {
         buildConfigField "String", "BACKEND_URL", "\"${backendUrl}\""
         buildConfigField "boolean", "BILLING_ENABLED", "${billingEnabled}"
         buildConfigField "String", "SUB_PRODUCT_ID", "\"${subProductId}\""
+        buildConfigField "String", "SUPABASE_URL", "\"${supabaseUrl}\""
+        buildConfigField "String", "SUPABASE_ANON_KEY", "\"${supabaseAnonKey}\""
     }
 
     buildFeatures {

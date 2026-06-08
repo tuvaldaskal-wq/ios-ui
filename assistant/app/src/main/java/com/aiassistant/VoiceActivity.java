@@ -44,25 +44,17 @@ public class VoiceActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // Require login when Supabase is configured.
+        if (Supabase.isConfigured(this) && SupabaseAuth.getToken(this) == null) {
+            startActivity(new Intent(this, AuthActivity.class));
+            finish();
+            return;
+        }
+
         config = new Config(this);
         agent = new Agent(this, config);
         setContentView(buildUi());
-
-        // Google Play subscription gate (off during dev; restores automatically).
-        if (Billing.enabled()) {
-            showPaywall();
-            billing = new Billing(this, new Billing.Listener() {
-                @Override
-                public void onSubscriptionChanged(boolean subscribed) {
-                    if (subscribed) {
-                        hidePaywall();
-                    } else {
-                        showPaywall();
-                    }
-                }
-            });
-            billing.start();
-        }
+        setupGate();
 
         tts = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
             @Override
@@ -272,13 +264,14 @@ public class VoiceActivity extends Activity {
         @Override public void onEvent(int eventType, Bundle params) { }
     };
 
-    private void process(String text) {
+    private void process(final String text) {
         caption.setText(text);
         if (!config.isConfigured()) {
             caption.setText("No API key / sign-in configured.");
             return;
         }
         orb.setState(OrbView.THINKING);
+        log("user", text);
         agent.send(text, new Agent.Listener() {
             @Override
             public void onStatus(String note) {
@@ -287,6 +280,7 @@ public class VoiceActivity extends Activity {
             @Override
             public void onResult(String reply) {
                 caption.setText(reply);
+                log("assistant", reply);
                 speak(reply);
             }
             @Override
@@ -295,6 +289,19 @@ public class VoiceActivity extends Activity {
                 caption.setText("⚠ " + message);
             }
         });
+    }
+
+    /** Log a turn to the signed-in account (powers the admin panel). */
+    private void log(final String role, final String content) {
+        if (!Supabase.isConfigured(this) || content == null || content.isEmpty()) {
+            return;
+        }
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                SupabaseDb.logMessage(VoiceActivity.this, role, content);
+            }
+        }).start();
     }
 
     private void speak(String text) {
@@ -313,6 +320,77 @@ public class VoiceActivity extends Activity {
         if (listening) {
             stopListen();
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Subscription gate (entitlement lives on the signed-in account)
+    // ------------------------------------------------------------------
+
+    private void setupGate() {
+        final boolean useSupabase = Supabase.isConfigured(this);
+        if (Billing.enabled()) {
+            billing = new Billing(this, new Billing.Listener() {
+                @Override
+                public void onSubscriptionChanged(boolean subscribed) {
+                    if (subscribed) {
+                        if (useSupabase) {
+                            saveProThenHide();   // store entitlement on the account
+                        } else {
+                            hidePaywall();
+                        }
+                    }
+                }
+            });
+            billing.start();
+        }
+        if (useSupabase) {
+            showPaywall();
+            checkPlan();
+        } else if (Billing.enabled()) {
+            showPaywall();
+        }
+        // else: no gate (local/dev build)
+    }
+
+    /** Read the plan from the signed-in account; unlock if it's pro. */
+    private void checkPlan() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final String plan = SupabaseDb.getPlan(VoiceActivity.this);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if ("pro".equalsIgnoreCase(plan)) {
+                            hidePaywall();
+                        } else {
+                            showPaywall();
+                        }
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void saveProThenHide() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                SupabaseDb.setPlanPro(VoiceActivity.this);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        hidePaywall();
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void signOut() {
+        SupabaseAuth.signOut(this);
+        startActivity(new Intent(this, AuthActivity.class));
+        finish();
     }
 
     // ------------------------------------------------------------------
@@ -382,9 +460,27 @@ public class VoiceActivity extends Activity {
                 if (billing != null) {
                     billing.refresh();
                 }
+                if (Supabase.isConfigured(VoiceActivity.this)) {
+                    checkPlan();
+                }
             }
         });
         p.addView(restore);
+
+        if (Supabase.isConfigured(this)) {
+            TextView out = new TextView(this);
+            out.setText("Sign out");
+            out.setTextColor(Color.parseColor("#66FFFFFF"));
+            out.setTextSize(13f);
+            out.setPadding(dp(16), dp(6), dp(16), dp(8));
+            out.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    signOut();
+                }
+            });
+            p.addView(out);
+        }
 
         paywall = p;
         root.addView(paywall, new FrameLayout.LayoutParams(
