@@ -39,12 +39,15 @@ import android.os.Process;
 import android.provider.Settings;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.view.DragEvent;
 import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.animation.Animation;
+import android.view.animation.RotateAnimation;
 import android.view.ViewOutlineProvider;
 import android.view.animation.DecelerateInterpolator;
 import android.view.animation.TranslateAnimation;
@@ -123,6 +126,31 @@ public class LauncherActivity extends Activity {
     private boolean torchOn;
 
     private static final String KEY_WALLPAPER = "wallpaper";
+    private static final String KEY_ITEMS = "home_items";
+
+    // Jiggle / edit mode for the home grid
+    private boolean editMode;
+
+    /** A home-screen item: either a single app or a folder of apps. */
+    private static final class HomeItem {
+        boolean isFolder;
+        String key;                       // app: "pkg/activity"
+        String folderName;                // folder display name
+        List<String> folderKeys;          // app keys inside a folder
+
+        static HomeItem app(String key) {
+            HomeItem h = new HomeItem();
+            h.key = key;
+            return h;
+        }
+        static HomeItem folder(String name, List<String> keys) {
+            HomeItem h = new HomeItem();
+            h.isFolder = true;
+            h.folderName = name;
+            h.folderKeys = keys;
+            return h;
+        }
+    }
 
     private static final class IconRef {
         final String pkg;
@@ -138,6 +166,7 @@ public class LauncherActivity extends Activity {
     }
 
     private List<AppInfo> allApps = new ArrayList<AppInfo>();
+    private Map<String, AppInfo> appByKey = new HashMap<String, AppInfo>();
     private final List<View> dots = new ArrayList<View>();
     private final SimpleDateFormat clockFmt = new SimpleDateFormat("h:mm", Locale.getDefault());
 
@@ -254,6 +283,10 @@ public class LauncherActivity extends Activity {
             hideSpotlight();
             return;
         }
+        if (editMode) {
+            exitEditMode();
+            return;
+        }
         if (pager != null && pager.getCurrentPage() != 0) {
             pager.snapToPage(0);
         }
@@ -295,20 +328,16 @@ public class LauncherActivity extends Activity {
         for (int i = 0; i < allApps.size() && i < DOCK_COUNT; i++) {
             dockApps.add(allApps.get(i));
         }
-        Set<String> dockKeys = new LinkedHashSet<String>();
+        final Set<String> dockKeys = new LinkedHashSet<String>();
         for (int i = 0; i < dockApps.size(); i++) {
             dockKeys.add(key(dockApps.get(i)));
         }
 
-        // Curated home apps = chosen set, minus dock apps, in alphabetical order.
-        Set<String> chosen = loadChosenKeys(dockKeys);
-        List<AppInfo> homeApps = new ArrayList<AppInfo>();
+        appByKey = new HashMap<String, AppInfo>();
         for (int i = 0; i < allApps.size(); i++) {
-            AppInfo a = allApps.get(i);
-            if (chosen.contains(key(a)) && !dockKeys.contains(key(a))) {
-                homeApps.add(a);
-            }
+            appByKey.put(key(allApps.get(i)), allApps.get(i));
         }
+        ensureItems(dockKeys);
 
         int screenW = getResources().getDisplayMetrics().widthPixels;
 
@@ -317,7 +346,7 @@ public class LauncherActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         LinearLayout pagesRow = new LinearLayout(this);
         pagesRow.setOrientation(LinearLayout.HORIZONTAL);
-        pagesRow.addView(buildHomePage(homeApps, screenW));
+        pagesRow.addView(buildHomePage(dockKeys, screenW));
         pagesRow.addView(buildLibraryPage(allApps, screenW));
         pager.addView(pagesRow);
         column.addView(pager);
@@ -365,10 +394,33 @@ public class LauncherActivity extends Activity {
         root.addView(island, islandLp);
         updateIsland();
 
+        // "Done" pill while in jiggle/edit mode.
+        if (editMode) {
+            TextView done = new TextView(this);
+            done.setText("Done");
+            done.setTextColor(Color.WHITE);
+            done.setTextSize(15f);
+            done.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+            done.setBackgroundResource(R.drawable.search_pill);
+            done.setPadding(dp(18), dp(7), dp(18), dp(7));
+            done.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    exitEditMode();
+                }
+            });
+            FrameLayout.LayoutParams doneLp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            doneLp.gravity = Gravity.TOP | Gravity.END;
+            doneLp.topMargin = getStatusBarHeight() + dp(6);
+            doneLp.rightMargin = dp(14);
+            root.addView(done, doneLp);
+        }
+
         return root;
     }
 
-    private View buildHomePage(List<AppInfo> homeApps, int pageWidth) {
+    private View buildHomePage(Set<String> dockKeys, int pageWidth) {
         final GestureScrollView scroll = new GestureScrollView(this);
         scroll.setLayoutParams(new LinearLayout.LayoutParams(
                 pageWidth, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -398,8 +450,8 @@ public class LauncherActivity extends Activity {
             }
         }
 
-        // Curated app icons.
-        addAppRows(content, homeApps, true);
+        // Curated grid of apps + folders, with drag-to-rearrange.
+        addHomeGrid(content, dockKeys);
 
         // Long-press empty home space = edit menu (reliable OnLongClickListener).
         content.setOnLongClickListener(new View.OnLongClickListener() {
@@ -819,10 +871,11 @@ public class LauncherActivity extends Activity {
         final List<AppInfo> apps = allApps;
         final String[] labels = new String[apps.size()];
         final boolean[] checked = new boolean[apps.size()];
-        Set<String> chosen = loadChosenKeys(new LinkedHashSet<String>());
+        Set<String> present = presentKeys(loadItems());
+        Set<String> dockKeys = dockKeySet();
         for (int i = 0; i < apps.size(); i++) {
             labels[i] = String.valueOf(apps.get(i).label);
-            checked[i] = chosen.contains(key(apps.get(i)));
+            checked[i] = present.contains(key(apps.get(i))) || dockKeys.contains(key(apps.get(i)));
         }
         new AlertDialog.Builder(this)
                 .setTitle("Apps on Home Screen")
@@ -842,12 +895,63 @@ public class LauncherActivity extends Activity {
                                 selected.add(key(apps.get(i)));
                             }
                         }
-                        prefs.edit().putStringSet(KEY_HOME_APPS, selected).apply();
+                        reconcileItems(selected);
                         rebuildUi();
                     }
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
+    }
+
+    /** All app keys currently on the home screen (standalone or inside folders). */
+    private Set<String> presentKeys(List<HomeItem> items) {
+        Set<String> keys = new LinkedHashSet<String>();
+        for (int i = 0; i < items.size(); i++) {
+            HomeItem it = items.get(i);
+            if (it.isFolder) {
+                if (it.folderKeys != null) {
+                    keys.addAll(it.folderKeys);
+                }
+            } else {
+                keys.add(it.key);
+            }
+        }
+        return keys;
+    }
+
+    /** Update the home items so exactly {@code selected} apps are present. */
+    private void reconcileItems(Set<String> selected) {
+        List<HomeItem> items = loadItems();
+        List<HomeItem> result = new ArrayList<HomeItem>();
+        for (int i = 0; i < items.size(); i++) {
+            HomeItem it = items.get(i);
+            if (it.isFolder) {
+                List<String> keep = new ArrayList<String>();
+                for (int j = 0; j < it.folderKeys.size(); j++) {
+                    if (selected.contains(it.folderKeys.get(j))) {
+                        keep.add(it.folderKeys.get(j));
+                    }
+                }
+                if (keep.size() >= 2) {
+                    it.folderKeys = keep;
+                    result.add(it);
+                } else if (keep.size() == 1) {
+                    result.add(HomeItem.app(keep.get(0)));
+                }
+            } else if (selected.contains(it.key)) {
+                result.add(it);
+            }
+        }
+        // Append any newly selected apps that aren't already present.
+        Set<String> present = presentKeys(result);
+        Set<String> dockKeys = dockKeySet();
+        for (int i = 0; i < allApps.size(); i++) {
+            String k = key(allApps.get(i));
+            if (selected.contains(k) && !present.contains(k) && !dockKeys.contains(k)) {
+                result.add(HomeItem.app(k));
+            }
+        }
+        saveItems(result);
     }
 
     /** Full-screen widget gallery with a live preview image for each widget. */
@@ -1477,6 +1581,533 @@ public class LauncherActivity extends Activity {
         } catch (Exception ignored) {
         }
         return out;
+    }
+
+    // ------------------------------------------------------------------
+    // Home grid: items, folders, drag-to-rearrange, jiggle mode
+    // ------------------------------------------------------------------
+
+    private void ensureItems(Set<String> dockKeys) {
+        if (prefs.getString(KEY_ITEMS, null) != null) {
+            return;
+        }
+        Set<String> chosen = loadChosenKeys(dockKeys);
+        List<HomeItem> items = new ArrayList<HomeItem>();
+        for (int i = 0; i < allApps.size(); i++) {
+            String k = key(allApps.get(i));
+            if (chosen.contains(k) && !dockKeys.contains(k)) {
+                items.add(HomeItem.app(k));
+            }
+        }
+        saveItems(items);
+    }
+
+    private List<HomeItem> loadItems() {
+        List<HomeItem> list = new ArrayList<HomeItem>();
+        String raw = prefs.getString(KEY_ITEMS, null);
+        if (raw == null || raw.length() == 0) {
+            return list;
+        }
+        String[] parts = raw.split(";", -1);
+        for (int i = 0; i < parts.length; i++) {
+            if (parts[i].length() == 0) {
+                continue;
+            }
+            String[] f = parts[i].split("\\|", -1);
+            if (f[0].equals("A") && f.length >= 2) {
+                list.add(HomeItem.app(f[1]));
+            } else if (f[0].equals("F")) {
+                String name = f.length >= 2 ? f[1] : "Folder";
+                List<String> keys = new ArrayList<String>();
+                if (f.length >= 3 && f[2].length() > 0) {
+                    String[] ks = f[2].split(",", -1);
+                    for (int k = 0; k < ks.length; k++) {
+                        if (ks[k].length() > 0) {
+                            keys.add(ks[k]);
+                        }
+                    }
+                }
+                list.add(HomeItem.folder(name, keys));
+            }
+        }
+        return list;
+    }
+
+    private void saveItems(List<HomeItem> items) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < items.size(); i++) {
+            HomeItem it = items.get(i);
+            if (i > 0) {
+                sb.append(';');
+            }
+            if (it.isFolder) {
+                String name = it.folderName == null ? "Folder" : it.folderName;
+                name = name.replaceAll("[;|,\\r\\n]", " ");
+                sb.append("F|").append(name).append('|');
+                for (int j = 0; j < it.folderKeys.size(); j++) {
+                    if (j > 0) {
+                        sb.append(',');
+                    }
+                    sb.append(it.folderKeys.get(j));
+                }
+            } else {
+                sb.append("A|").append(it.key);
+            }
+        }
+        prefs.edit().putString(KEY_ITEMS, sb.toString()).apply();
+    }
+
+    private void addHomeGrid(LinearLayout content, Set<String> dockKeys) {
+        List<HomeItem> items = loadItems();
+
+        // Render-time clean: drop apps that are missing/in the dock, and prune folders.
+        List<HomeItem> visible = new ArrayList<HomeItem>();
+        for (int i = 0; i < items.size(); i++) {
+            HomeItem it = items.get(i);
+            if (it.isFolder) {
+                if (it.folderKeys != null && !it.folderKeys.isEmpty()) {
+                    visible.add(it);
+                }
+            } else if (appByKey.containsKey(it.key) && !dockKeys.contains(it.key)) {
+                visible.add(it);
+            }
+        }
+
+        final LinearLayout grid = new LinearLayout(this);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        grid.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        grid.setOnDragListener(new View.OnDragListener() {
+            @Override
+            public boolean onDrag(View v, DragEvent event) {
+                if (event.getAction() == DragEvent.ACTION_DROP) {
+                    Object ls = event.getLocalState();
+                    if (ls instanceof Integer) {
+                        performDrop((Integer) ls, event.getX(), event.getY(), v.getWidth());
+                    }
+                }
+                return true;
+            }
+        });
+
+        int rowHeight = dp(96);
+        int index = 0;
+        while (index < visible.size()) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            for (int c = 0; c < COLUMNS; c++) {
+                LinearLayout.LayoutParams cellLp = new LinearLayout.LayoutParams(0, rowHeight, 1f);
+                if (index < visible.size()) {
+                    row.addView(buildHomeItemCell(visible.get(index), index), cellLp);
+                } else {
+                    row.addView(new View(this), cellLp);
+                }
+                index++;
+            }
+            grid.addView(row, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        content.addView(grid);
+    }
+
+    private View buildHomeItemCell(final HomeItem item, final int index) {
+        FrameLayout cell = new FrameLayout(this);
+        cell.setPadding(dp(4), dp(6), dp(4), dp(6));
+
+        LinearLayout inner = new LinearLayout(this);
+        inner.setOrientation(LinearLayout.VERTICAL);
+        inner.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        int iconSize = dp(60);
+        if (item.isFolder) {
+            inner.addView(buildFolderPreview(item.folderKeys),
+                    new LinearLayout.LayoutParams(iconSize, iconSize));
+        } else {
+            AppInfo a = appByKey.get(item.key);
+            ImageView icon = new ImageView(this);
+            icon.setImageDrawable(IconUtils.makeIosIcon(a.icon, iconSize,
+                    MediaListenerService.getCount(a.packageName)));
+            inner.addView(icon, new LinearLayout.LayoutParams(iconSize, iconSize));
+            iconRefs.add(new IconRef(a.packageName, icon, a.icon, iconSize));
+        }
+
+        TextView label = new TextView(this);
+        label.setText(item.isFolder ? item.folderName : String.valueOf(appByKey.get(item.key).label));
+        label.setTextColor(Color.WHITE);
+        label.setTextSize(11.5f);
+        label.setMaxLines(1);
+        label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        label.setGravity(Gravity.CENTER);
+        label.setShadowLayer(3f, 0f, 1f, Color.parseColor("#80000000"));
+        LinearLayout.LayoutParams lblLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lblLp.topMargin = dp(5);
+        inner.addView(label, lblLp);
+
+        cell.addView(inner, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        cell.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (item.isFolder) {
+                    openFolder(index);
+                } else if (!editMode) {
+                    launchApp(appByKey.get(item.key));
+                }
+            }
+        });
+        cell.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                if (!editMode) {
+                    enterEditMode();
+                } else {
+                    startItemDrag(v, index);
+                }
+                return true;
+            }
+        });
+
+        if (editMode) {
+            startWobble(inner, index);
+            FrameLayout badge = new FrameLayout(this);
+            badge.setBackgroundResource(R.drawable.remove_badge);
+            TextView minus = new TextView(this);
+            minus.setText("−");
+            minus.setTextColor(Color.parseColor("#333333"));
+            minus.setTextSize(15f);
+            minus.setGravity(Gravity.CENTER);
+            badge.addView(minus, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(dp(22), dp(22));
+            blp.gravity = Gravity.TOP | Gravity.START;
+            blp.leftMargin = dp(8);
+            badge.setLayoutParams(blp);
+            badge.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    removeHomeItem(index);
+                }
+            });
+            cell.addView(badge);
+        }
+        return cell;
+    }
+
+    private View buildFolderPreview(List<String> keys) {
+        FrameLayout tile = new FrameLayout(this);
+        tile.setBackgroundResource(R.drawable.folder_tile);
+        int pad = dp(7);
+        tile.setPadding(pad, pad, pad, pad);
+
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        int mini = dp(20);
+        int k = 0;
+        for (int r = 0; r < 2; r++) {
+            LinearLayout mrow = new LinearLayout(this);
+            mrow.setOrientation(LinearLayout.HORIZONTAL);
+            for (int c = 0; c < 2; c++) {
+                ImageView iv = new ImageView(this);
+                if (k < keys.size() && appByKey.containsKey(keys.get(k))) {
+                    iv.setImageDrawable(IconUtils.makeIosIcon(appByKey.get(keys.get(k)).icon, mini));
+                }
+                LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(mini, mini);
+                mlp.setMargins(dp(1), dp(1), dp(1), dp(1));
+                mrow.addView(iv, mlp);
+                k++;
+            }
+            col.addView(mrow);
+        }
+        tile.addView(col, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER));
+        return tile;
+    }
+
+    private void startWobble(View v, int index) {
+        RotateAnimation anim = new RotateAnimation(-1.7f, 1.7f,
+                Animation.RELATIVE_TO_SELF, 0.5f, Animation.RELATIVE_TO_SELF, 0.5f);
+        anim.setDuration(130);
+        anim.setRepeatMode(Animation.REVERSE);
+        anim.setRepeatCount(Animation.INFINITE);
+        anim.setStartOffset((index % 3) * 40);
+        v.startAnimation(anim);
+    }
+
+    private void startItemDrag(View v, int index) {
+        ClipData data = ClipData.newPlainText("idx", String.valueOf(index));
+        v.startDrag(data, new View.DragShadowBuilder(v), Integer.valueOf(index), 0);
+    }
+
+    private void performDrop(Integer srcObj, float x, float y, int gridWidth) {
+        List<HomeItem> items = loadItems();
+        // The drag index refers to the *visible* list; rebuild it the same way.
+        List<HomeItem> visible = visibleItems(items);
+        int src = srcObj.intValue();
+        if (src < 0 || src >= visible.size() || gridWidth <= 0) {
+            return;
+        }
+        float cellW = gridWidth / (float) COLUMNS;
+        int rowH = dp(96);
+        int col = (int) (x / cellW);
+        if (col < 0) {
+            col = 0;
+        }
+        if (col > COLUMNS - 1) {
+            col = COLUMNS - 1;
+        }
+        int row = (int) (y / rowH);
+        if (row < 0) {
+            row = 0;
+        }
+        int target = row * COLUMNS + col;
+        boolean onto = Math.abs(x - (col + 0.5f) * cellW) < cellW * 0.30f
+                && Math.abs(y - (row + 0.5f) * rowH) < rowH * 0.30f;
+
+        HomeItem srcItem = visible.get(src);
+        int srcReal = items.indexOf(srcItem);
+
+        if (target >= visible.size()) {
+            // Move to the end.
+            items.remove(srcReal);
+            items.add(srcItem);
+            saveItems(items);
+            rebuildUi();
+            return;
+        }
+        if (target == src) {
+            return;
+        }
+        HomeItem tgtItem = visible.get(target);
+        int tgtReal = items.indexOf(tgtItem);
+
+        if (onto && !srcItem.isFolder) {
+            if (tgtItem.isFolder) {
+                tgtItem.folderKeys.add(srcItem.key);
+                items.remove(srcReal);
+            } else {
+                List<String> keys = new ArrayList<String>();
+                keys.add(tgtItem.key);
+                keys.add(srcItem.key);
+                items.set(tgtReal, HomeItem.folder("Folder", keys));
+                items.remove(srcItem);
+            }
+        } else {
+            items.remove(srcReal);
+            int insert = items.indexOf(tgtItem);
+            if (insert < 0) {
+                insert = items.size();
+            }
+            items.add(insert, srcItem);
+        }
+        saveItems(items);
+        rebuildUi();
+    }
+
+    private List<HomeItem> visibleItems(List<HomeItem> items) {
+        List<HomeItem> visible = new ArrayList<HomeItem>();
+        Set<String> dockKeys = dockKeySet();
+        for (int i = 0; i < items.size(); i++) {
+            HomeItem it = items.get(i);
+            if (it.isFolder) {
+                if (it.folderKeys != null && !it.folderKeys.isEmpty()) {
+                    visible.add(it);
+                }
+            } else if (appByKey.containsKey(it.key) && !dockKeys.contains(it.key)) {
+                visible.add(it);
+            }
+        }
+        return visible;
+    }
+
+    private Set<String> dockKeySet() {
+        Set<String> dockKeys = new LinkedHashSet<String>();
+        for (int i = 0; i < allApps.size() && i < DOCK_COUNT; i++) {
+            dockKeys.add(key(allApps.get(i)));
+        }
+        return dockKeys;
+    }
+
+    private void enterEditMode() {
+        if (editMode) {
+            return;
+        }
+        editMode = true;
+        rebuildUi();
+    }
+
+    private void exitEditMode() {
+        if (!editMode) {
+            return;
+        }
+        editMode = false;
+        rebuildUi();
+    }
+
+    private void removeHomeItem(int visibleIndex) {
+        List<HomeItem> items = loadItems();
+        List<HomeItem> visible = visibleItems(items);
+        if (visibleIndex < 0 || visibleIndex >= visible.size()) {
+            return;
+        }
+        items.remove(visible.get(visibleIndex));
+        saveItems(items);
+        rebuildUi();
+    }
+
+    private void openFolder(final int visibleIndex) {
+        List<HomeItem> items = loadItems();
+        List<HomeItem> visible = visibleItems(items);
+        if (visibleIndex < 0 || visibleIndex >= visible.size()) {
+            return;
+        }
+        final HomeItem folder = visible.get(visibleIndex);
+        if (!folder.isFolder) {
+            return;
+        }
+
+        final FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(Color.parseColor("#E6000000"));
+        overlay.setClickable(true);
+        overlay.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                rootView.removeView(overlay);
+            }
+        });
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        panelLp.gravity = Gravity.CENTER;
+        panelLp.leftMargin = dp(20);
+        panelLp.rightMargin = dp(20);
+        panel.setLayoutParams(panelLp);
+        panel.setBackgroundResource(R.drawable.widget_card);
+        panel.setPadding(dp(16), dp(18), dp(16), dp(18));
+
+        TextView title = new TextView(this);
+        title.setText(folder.folderName);
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(22f);
+        title.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        title.setGravity(Gravity.CENTER);
+        title.setPadding(0, 0, 0, dp(14));
+        title.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                renameFolder(visibleIndex);
+                rootView.removeView(overlay);
+            }
+        });
+        panel.addView(title);
+
+        int i = 0;
+        while (i < folder.folderKeys.size()) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            for (int c = 0; c < COLUMNS; c++) {
+                LinearLayout.LayoutParams cellLp =
+                        new LinearLayout.LayoutParams(0, dp(92), 1f);
+                if (i < folder.folderKeys.size() && appByKey.containsKey(folder.folderKeys.get(i))) {
+                    final AppInfo a = appByKey.get(folder.folderKeys.get(i));
+                    final String fkey = folder.folderKeys.get(i);
+                    View fc = makeAppCell(a, true, false);
+                    fc.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View v) {
+                            rootView.removeView(overlay);
+                            launchApp(a);
+                        }
+                    });
+                    fc.setOnLongClickListener(new View.OnLongClickListener() {
+                        @Override
+                        public boolean onLongClick(View v) {
+                            rootView.removeView(overlay);
+                            removeFromFolder(visibleIndex, fkey);
+                            return true;
+                        }
+                    });
+                    row.addView(fc, cellLp);
+                } else {
+                    row.addView(new View(this), cellLp);
+                }
+                i++;
+            }
+            panel.addView(row);
+        }
+
+        TextView hint = new TextView(this);
+        hint.setText("Long-press an app to remove it · tap the name to rename");
+        hint.setTextColor(Color.parseColor("#80FFFFFF"));
+        hint.setTextSize(11f);
+        hint.setGravity(Gravity.CENTER);
+        hint.setPadding(0, dp(10), 0, 0);
+        panel.addView(hint);
+
+        overlay.addView(panel);
+        rootView.addView(overlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void renameFolder(final int visibleIndex) {
+        final EditText input = new EditText(this);
+        List<HomeItem> items = loadItems();
+        List<HomeItem> visible = visibleItems(items);
+        if (visibleIndex < 0 || visibleIndex >= visible.size() || !visible.get(visibleIndex).isFolder) {
+            return;
+        }
+        input.setText(visible.get(visibleIndex).folderName);
+        input.setSingleLine(true);
+        new AlertDialog.Builder(this)
+                .setTitle("Folder Name")
+                .setView(input)
+                .setPositiveButton("Save", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        String name = input.getText().toString().trim();
+                        if (name.length() == 0) {
+                            name = "Folder";
+                        }
+                        List<HomeItem> cur = loadItems();
+                        List<HomeItem> vis = visibleItems(cur);
+                        if (visibleIndex < vis.size()) {
+                            vis.get(visibleIndex).folderName = name;
+                            saveItems(cur);
+                            rebuildUi();
+                        }
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void removeFromFolder(int visibleIndex, String fkey) {
+        List<HomeItem> items = loadItems();
+        List<HomeItem> visible = visibleItems(items);
+        if (visibleIndex < 0 || visibleIndex >= visible.size()) {
+            return;
+        }
+        HomeItem folder = visible.get(visibleIndex);
+        if (!folder.isFolder) {
+            return;
+        }
+        folder.folderKeys.remove(fkey);
+        int realIndex = items.indexOf(folder);
+        // The removed app returns to the home grid as a standalone item.
+        items.add(HomeItem.app(fkey));
+        // Collapse a folder that no longer holds at least two apps.
+        if (folder.folderKeys.size() == 1) {
+            items.set(realIndex, HomeItem.app(folder.folderKeys.get(0)));
+        } else if (folder.folderKeys.isEmpty()) {
+            items.remove(folder);
+        }
+        saveItems(items);
+        rebuildUi();
     }
 
     // ------------------------------------------------------------------
