@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="white">#FFFFFFFF</color>
+    <color name="dock_bg">#33FFFFFF</color>
+    <color name="folder_bg">#55FFFFFF</color>
+    <color name="dot_inactive">#66FFFFFF</color>
+    <color name="dot_active">#FFFFFFFF</color>
+    <color name="search_bg">#40FFFFFF</color>
+    <color name="wallpaper_top">#FF1C4E9C</color>
+    <color name="wallpaper_mid">#FF6A3FB5</color>
+    <color name="wallpaper_bottom">#FFC0468E</color>
+</resources>
