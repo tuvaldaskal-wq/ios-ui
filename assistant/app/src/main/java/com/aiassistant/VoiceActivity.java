@@ -23,6 +23,7 @@ import java.util.Locale;
 /** Black screen with a glowing orb that wiggles to the rhythm of speech. */
 public class VoiceActivity extends Activity {
 
+    public static final String EXTRA_FROM_ASSIST = "from_assist";
     private static final int REQ_PERMS = 201;
 
     private Config config;
@@ -97,6 +98,32 @@ public class VoiceActivity extends Activity {
         if (!config.isConfigured()) {
             caption.setText("Add your API key (or sign in to a configured build) to start.");
         }
+        maybeStartFromAssist(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        maybeStartFromAssist(intent);
+    }
+
+    /** When opened via the long-press assist gesture, begin listening right away. */
+    private void maybeStartFromAssist(Intent intent) {
+        if (intent == null || !intent.getBooleanExtra(EXTRA_FROM_ASSIST, false)) {
+            return;
+        }
+        if (orb == null) {
+            return;
+        }
+        orb.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (paywall == null && !listening) {
+                    toggleListen();
+                }
+            }
+        }, 500);
     }
 
     private void requestPerms() {
