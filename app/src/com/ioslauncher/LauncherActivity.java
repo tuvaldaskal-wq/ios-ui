@@ -107,6 +107,10 @@ public class LauncherActivity extends Activity {
     private DevicePolicyManager dpm;
     private ComponentName adminComponent;
 
+    // Tracks whether usage access was granted at last UI build, so the
+    // Suggestions row can appear as soon as the user returns from Settings.
+    private boolean usageGrantedAtBuild;
+
     private List<AppInfo> allApps = new ArrayList<AppInfo>();
     private final List<View> dots = new ArrayList<View>();
     private final SimpleDateFormat clockFmt = new SimpleDateFormat("h:mm", Locale.getDefault());
@@ -193,6 +197,11 @@ public class LauncherActivity extends Activity {
         registerReceiver(systemReceiver, filter);
         updateClock();
         connectMedia();
+        // If the user just granted usage access in Settings, surface the
+        // Suggestions row immediately by rebuilding the home screen.
+        if (hasUsageAccess() != usageGrantedAtBuild) {
+            rebuildUi();
+        }
     }
 
     @Override
@@ -336,6 +345,7 @@ public class LauncherActivity extends Activity {
         content.setMinimumHeight(getResources().getDisplayMetrics().heightPixels);
 
         // Smart Suggestions row (usage-based), if access has been granted.
+        usageGrantedAtBuild = hasUsageAccess();
         View suggestions = buildSuggestionsRow();
         if (suggestions != null) {
             content.addView(suggestions);
