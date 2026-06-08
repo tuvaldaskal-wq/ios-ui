@@ -26,6 +26,10 @@ public final class IconUtils {
     private static final float CORNER_RATIO = 0.2237f;
 
     public static BitmapDrawable makeIosIcon(Drawable src, int sizePx) {
+        return makeIosIcon(src, sizePx, 0);
+    }
+
+    public static BitmapDrawable makeIosIcon(Drawable src, int sizePx, int badge) {
         int size = Math.max(1, sizePx);
         float radius = size * CORNER_RATIO;
 
@@ -69,8 +73,37 @@ public final class IconUtils {
         paint.setShader(new BitmapShader(raw, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP));
         canvas.drawRoundRect(new RectF(0, 0, size, size), radius, radius, paint);
 
+        if (badge > 0) {
+            drawBadge(canvas, size, badge);
+        }
+
         raw.recycle();
         return new BitmapDrawable(out);
+    }
+
+    /** iOS-style red notification badge at the top-right. */
+    private static void drawBadge(Canvas canvas, int size, int count) {
+        float r = size * 0.18f;
+        float cx = size - r - size * 0.015f;
+        float cy = r + size * 0.015f;
+
+        Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
+        ring.setColor(Color.WHITE);
+        canvas.drawCircle(cx, cy, r + size * 0.022f, ring);
+
+        Paint red = new Paint(Paint.ANTI_ALIAS_FLAG);
+        red.setColor(Color.parseColor("#FF3B30"));
+        canvas.drawCircle(cx, cy, r, red);
+
+        String text = count > 99 ? "99+" : String.valueOf(count);
+        Paint tp = new Paint(Paint.ANTI_ALIAS_FLAG);
+        tp.setColor(Color.WHITE);
+        tp.setTextAlign(Paint.Align.CENTER);
+        tp.setFakeBoldText(true);
+        tp.setTextSize(text.length() >= 3 ? r * 0.95f : r * 1.25f);
+        Paint.FontMetrics fm = tp.getFontMetrics();
+        float baseline = cy - (fm.ascent + fm.descent) / 2f;
+        canvas.drawText(text, cx, baseline, tp);
     }
 
     public static int dp(android.content.Context ctx, float dp) {

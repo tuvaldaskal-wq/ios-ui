@@ -28,6 +28,7 @@ import android.graphics.Outline;
 import android.graphics.Typeface;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
+import android.hardware.camera2.CameraManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
@@ -38,7 +39,10 @@ import android.os.Process;
 import android.provider.Settings;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.view.GestureDetector;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
@@ -111,6 +115,28 @@ public class LauncherActivity extends Activity {
     // Suggestions row can appear as soon as the user returns from Settings.
     private boolean usageGrantedAtBuild;
 
+    // Notification badges: icons currently on screen, refreshed when notifications change.
+    private final List<IconRef> iconRefs = new ArrayList<IconRef>();
+
+    // Control Center flashlight
+    private CameraManager cameraManager;
+    private boolean torchOn;
+
+    private static final String KEY_WALLPAPER = "wallpaper";
+
+    private static final class IconRef {
+        final String pkg;
+        final ImageView view;
+        final Drawable icon;
+        final int size;
+        IconRef(String pkg, ImageView view, Drawable icon, int size) {
+            this.pkg = pkg;
+            this.view = view;
+            this.icon = icon;
+            this.size = size;
+        }
+    }
+
     private List<AppInfo> allApps = new ArrayList<AppInfo>();
     private final List<View> dots = new ArrayList<View>();
     private final SimpleDateFormat clockFmt = new SimpleDateFormat("h:mm", Locale.getDefault());
@@ -151,6 +177,13 @@ public class LauncherActivity extends Activity {
         listenerComponent = new ComponentName(this, MediaListenerService.class);
         dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
         adminComponent = new ComponentName(this, AdminReceiver.class);
+        cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
+        MediaListenerService.setBadgeListener(new MediaListenerService.BadgeListener() {
+            @Override
+            public void onBadgesChanged() {
+                updateBadges();
+            }
+        });
         applyImmersiveFlags();
         rebuildUi();
         updateClock();
@@ -202,6 +235,7 @@ public class LauncherActivity extends Activity {
         if (hasUsageAccess() != usageGrantedAtBuild) {
             rebuildUi();
         }
+        updateBadges();
     }
 
     @Override
@@ -241,9 +275,10 @@ public class LauncherActivity extends Activity {
     // ------------------------------------------------------------------
 
     private View buildUi() {
+        iconRefs.clear();
         FrameLayout root = new FrameLayout(this);
         rootView = root;
-        root.setBackgroundResource(R.drawable.ios_wallpaper);
+        root.setBackgroundResource(currentWallpaper());
 
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
@@ -366,12 +401,38 @@ public class LauncherActivity extends Activity {
         // Curated app icons.
         addAppRows(content, homeApps, true);
 
-        // Long-press anywhere empty on the home screen opens the edit menu.
-        content.setOnLongClickListener(new View.OnLongClickListener() {
+        // Gestures on empty home space: long-press = menu, double-tap = lock,
+        // swipe down = Spotlight.
+        final GestureDetector gestures = new GestureDetector(this,
+                new GestureDetector.SimpleOnGestureListener() {
+                    @Override
+                    public void onLongPress(MotionEvent e) {
+                        content.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                        showHomeMenu();
+                    }
+                    @Override
+                    public boolean onDoubleTap(MotionEvent e) {
+                        lockScreen();
+                        return true;
+                    }
+                    @Override
+                    public boolean onFling(MotionEvent e1, MotionEvent e2,
+                                           float velocityX, float velocityY) {
+                        if (e1 != null && e2 != null
+                                && e2.getY() - e1.getY() > dp(90)
+                                && Math.abs(velocityY) > Math.abs(velocityX)
+                                && velocityY > 0) {
+                            showSpotlight();
+                            return true;
+                        }
+                        return false;
+                    }
+                });
+        content.setOnTouchListener(new View.OnTouchListener() {
             @Override
-            public boolean onLongClick(View v) {
-                showHomeMenu();
-                return true;
+            public boolean onTouch(View v, MotionEvent event) {
+                gestures.onTouchEvent(event);
+                return false;
             }
         });
 
@@ -469,8 +530,10 @@ public class LauncherActivity extends Activity {
 
         ImageView icon = new ImageView(this);
         int iconSize = dp(60);
-        icon.setImageDrawable(IconUtils.makeIosIcon(app.icon, iconSize));
+        icon.setImageDrawable(IconUtils.makeIosIcon(app.icon, iconSize,
+                MediaListenerService.getCount(app.packageName)));
         cell.addView(icon, new LinearLayout.LayoutParams(iconSize, iconSize));
+        iconRefs.add(new IconRef(app.packageName, icon, app.icon, iconSize));
 
         if (showLabel) {
             TextView label = new TextView(this);
@@ -564,9 +627,16 @@ public class LauncherActivity extends Activity {
 
         LinearLayout holder = new LinearLayout(this);
         holder.setGravity(Gravity.CENTER);
+        holder.setPadding(0, dp(4), 0, dp(4));
         holder.addView(bar);
         holder.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        holder.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showControlCenter();
+            }
+        });
         return holder;
     }
 
@@ -587,9 +657,9 @@ public class LauncherActivity extends Activity {
 
     private void showHomeMenu() {
         showActionSheet("Edit Home Screen",
-                new String[]{"Add Widget", "Choose Home Apps",
+                new String[]{"Add Widget", "Choose Home Apps", "Wallpaper",
                         "Smart Suggestions Setup", "Dynamic Island Setup", "Lock Screen"},
-                new boolean[]{false, false, false, false, true},
+                new boolean[]{false, false, false, false, false, true},
                 new SheetListener() {
                     @Override
                     public void onSelect(int index) {
@@ -601,12 +671,15 @@ public class LauncherActivity extends Activity {
                                 showAppChooser();
                                 break;
                             case 2:
-                                openSettings(Settings.ACTION_USAGE_ACCESS_SETTINGS);
+                                showWallpaperPicker();
                                 break;
                             case 3:
-                                openSettings(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+                                openSettings(Settings.ACTION_USAGE_ACCESS_SETTINGS);
                                 break;
                             case 4:
+                                openSettings(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+                                break;
+                            case 5:
                                 lockScreen();
                                 break;
                             default:
@@ -1404,6 +1477,245 @@ public class LauncherActivity extends Activity {
         } catch (Exception ignored) {
         }
         return out;
+    }
+
+    // ------------------------------------------------------------------
+    // Notification badges
+    // ------------------------------------------------------------------
+
+    private void updateBadges() {
+        for (int i = 0; i < iconRefs.size(); i++) {
+            IconRef ref = iconRefs.get(i);
+            int count = MediaListenerService.getCount(ref.pkg);
+            ref.view.setImageDrawable(IconUtils.makeIosIcon(ref.icon, ref.size, count));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Wallpaper themes
+    // ------------------------------------------------------------------
+
+    private int currentWallpaper() {
+        String name = prefs.getString(KEY_WALLPAPER, "ios_wallpaper");
+        if ("ocean".equals(name)) {
+            return R.drawable.theme_ocean;
+        }
+        if ("sunset".equals(name)) {
+            return R.drawable.theme_sunset;
+        }
+        if ("dark".equals(name)) {
+            return R.drawable.theme_dark;
+        }
+        return R.drawable.ios_wallpaper;
+    }
+
+    private void showWallpaperPicker() {
+        final String[] names = {"Aurora", "Ocean", "Sunset", "Midnight"};
+        final String[] keys = {"ios_wallpaper", "ocean", "sunset", "dark"};
+        showActionSheet("Wallpaper", names, null, new SheetListener() {
+            @Override
+            public void onSelect(int index) {
+                prefs.edit().putString(KEY_WALLPAPER, keys[index]).apply();
+                rebuildUi();
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // Control Center
+    // ------------------------------------------------------------------
+
+    private void showControlCenter() {
+        final FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(Color.parseColor("#B3000000"));
+        overlay.setClickable(true);
+        overlay.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                rootView.removeView(overlay);
+            }
+        });
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackgroundResource(R.drawable.widget_card);
+        panel.setPadding(dp(18), dp(18), dp(18), dp(18));
+        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        panelLp.gravity = Gravity.BOTTOM;
+        panelLp.leftMargin = dp(10);
+        panelLp.rightMargin = dp(10);
+        panelLp.bottomMargin = dp(20);
+        panel.setLayoutParams(panelLp);
+
+        TextView title = new TextView(this);
+        title.setText("Control Center");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(15f);
+        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+        title.setPadding(dp(4), 0, 0, dp(14));
+        panel.addView(title);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER);
+
+        final TextView flash = controlTile("🔦", "Flashlight", torchOn);
+        flash.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                toggleTorch();
+                v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                styleTile(flash, "🔦", "Flashlight", torchOn);
+            }
+        });
+        row.addView(flash);
+
+        TextView wifi = controlTile("📶", "Wi-Fi", false);
+        wifi.setOnClickListener(openSettingsTile(Settings.ACTION_WIFI_SETTINGS, overlay));
+        row.addView(wifi);
+
+        TextView bt = controlTile("🔵", "Bluetooth", false);
+        bt.setOnClickListener(openSettingsTile(Settings.ACTION_BLUETOOTH_SETTINGS, overlay));
+        row.addView(bt);
+
+        TextView air = controlTile("✈", "Airplane", false);
+        air.setOnClickListener(openSettingsTile(Settings.ACTION_AIRPLANE_MODE_SETTINGS, overlay));
+        row.addView(air);
+
+        panel.addView(row);
+
+        LinearLayout row2 = new LinearLayout(this);
+        row2.setOrientation(LinearLayout.HORIZONTAL);
+        row2.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams r2lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        r2lp.topMargin = dp(14);
+        row2.setLayoutParams(r2lp);
+
+        TextView calc = controlTile("🧮", "Calculator", false);
+        calc.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                rootView.removeView(overlay);
+                launchByCategory(Intent.CATEGORY_APP_CALCULATOR);
+            }
+        });
+        row2.addView(calc);
+
+        TextView cam = controlTile("📷", "Camera", false);
+        cam.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                rootView.removeView(overlay);
+                try {
+                    startActivity(new Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (Exception ignored) {
+                }
+            }
+        });
+        row2.addView(cam);
+
+        TextView settings = controlTile("⚙", "Settings", false);
+        settings.setOnClickListener(openSettingsTile(Settings.ACTION_SETTINGS, overlay));
+        row2.addView(settings);
+
+        TextView lock = controlTile("🔒", "Lock", false);
+        lock.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                rootView.removeView(overlay);
+                lockScreen();
+            }
+        });
+        row2.addView(lock);
+
+        panel.addView(row2);
+
+        overlay.addView(panel);
+        rootView.addView(overlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        TranslateAnimation anim = new TranslateAnimation(0, 0, dp(260), 0);
+        anim.setDuration(220);
+        anim.setInterpolator(new DecelerateInterpolator());
+        panel.startAnimation(anim);
+    }
+
+    private View.OnClickListener openSettingsTile(final String action, final View overlay) {
+        return new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                rootView.removeView(overlay);
+                openSettings(action);
+            }
+        };
+    }
+
+    private TextView controlTile(String glyph, String label, boolean on) {
+        TextView t = new TextView(this);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        lp.leftMargin = dp(6);
+        lp.rightMargin = dp(6);
+        t.setLayoutParams(lp);
+        styleTile(t, glyph, label, on);
+        return t;
+    }
+
+    private void styleTile(TextView t, String glyph, String label, boolean on) {
+        t.setText(glyph + "\n" + label);
+        t.setGravity(Gravity.CENTER);
+        t.setTextColor(on ? Color.parseColor("#FF9500") : Color.WHITE);
+        t.setTextSize(13f);
+        t.setLineSpacing(dp(4), 1f);
+        int v = dp(12);
+        t.setPadding(0, v, 0, v);
+        t.setBackgroundResource(on ? R.drawable.control_tile_on : R.drawable.control_tile);
+        LinearLayout.LayoutParams existing = (LinearLayout.LayoutParams) t.getLayoutParams();
+        if (existing != null) {
+            existing.leftMargin = dp(6);
+            existing.rightMargin = dp(6);
+        }
+    }
+
+    private void toggleTorch() {
+        if (cameraManager == null) {
+            return;
+        }
+        try {
+            String camId = null;
+            String[] ids = cameraManager.getCameraIdList();
+            for (int i = 0; i < ids.length; i++) {
+                Boolean hasFlash = cameraManager.getCameraCharacteristics(ids[i])
+                        .get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE);
+                Integer facing = cameraManager.getCameraCharacteristics(ids[i])
+                        .get(android.hardware.camera2.CameraCharacteristics.LENS_FACING);
+                if (Boolean.TRUE.equals(hasFlash)) {
+                    camId = ids[i];
+                    if (facing != null && facing.intValue()
+                            == android.hardware.camera2.CameraMetadata.LENS_FACING_BACK) {
+                        break;
+                    }
+                }
+            }
+            if (camId != null) {
+                torchOn = !torchOn;
+                cameraManager.setTorchMode(camId, torchOn);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void launchByCategory(String category) {
+        try {
+            Intent i = new Intent(Intent.ACTION_MAIN);
+            i.addCategory(category);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        } catch (Exception ignored) {
+        }
     }
 
     // ------------------------------------------------------------------
