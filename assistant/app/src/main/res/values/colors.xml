@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="bg_top">#FF0E1230</color>
-    <color name="bg_bottom">#FF241A52</color>
-    <color name="bubble_user">#FF0A84FF</color>
-    <color name="bubble_assistant">#26FFFFFF</color>
-    <color name="input_bg">#1FFFFFFF</color>
-    <color name="accent">#FF0A84FF</color>
+    <color name="bg_top">#FF0A0E24</color>
+    <color name="bg_bottom">#FF1A1140</color>
+    <color name="accent_a">#FF3B82F6</color>
+    <color name="accent_b">#FF8B5CF6</color>
+    <color name="user_a">#FF2E6CFF</color>
+    <color name="user_b">#FF7C3AED</color>
+    <color name="assistant_bubble">#1FFFFFFF</color>
+    <color name="assistant_stroke">#26FFFFFF</color>
+    <color name="chip_bg">#14FFFFFF</color>
+    <color name="chip_stroke">#33FFFFFF</color>
+    <color name="input_bg">#1AFFFFFF</color>
     <color name="white">#FFFFFFFF</color>
     <color name="muted">#99FFFFFF</color>
 </resources>
