@@ -1680,11 +1680,16 @@ public class LauncherActivity extends Activity {
         grid.setOnDragListener(new View.OnDragListener() {
             @Override
             public boolean onDrag(View v, DragEvent event) {
-                if (event.getAction() == DragEvent.ACTION_DROP) {
+                int action = event.getAction();
+                if (action == DragEvent.ACTION_DROP) {
                     Object ls = event.getLocalState();
                     if (ls instanceof Integer) {
                         performDrop((Integer) ls, event.getX(), event.getY(), v.getWidth());
                     }
+                } else if (action == DragEvent.ACTION_DRAG_ENDED) {
+                    // Always rebuild when the drag finishes so the grid reflects
+                    // any reorder/folder change and shows the jiggle state.
+                    rebuildUi();
                 }
                 return true;
             }
@@ -1761,10 +1766,10 @@ public class LauncherActivity extends Activity {
             @Override
             public boolean onLongClick(View v) {
                 v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-                if (!editMode) {
-                    enterEditMode();
-                } else {
-                    startItemDrag(v, index);
+                // Hold to immediately enter jiggle mode AND begin dragging, like
+                // iOS. Releasing in place just leaves you in edit mode.
+                if (startItemDrag(v, index)) {
+                    editMode = true;
                 }
                 return true;
             }
@@ -1837,9 +1842,9 @@ public class LauncherActivity extends Activity {
         v.startAnimation(anim);
     }
 
-    private void startItemDrag(View v, int index) {
+    private boolean startItemDrag(View v, int index) {
         ClipData data = ClipData.newPlainText("idx", String.valueOf(index));
-        v.startDrag(data, new View.DragShadowBuilder(v), Integer.valueOf(index), 0);
+        return v.startDrag(data, new View.DragShadowBuilder(v), Integer.valueOf(index), 0);
     }
 
     private void performDrop(Integer srcObj, float x, float y, int gridWidth) {
@@ -1875,7 +1880,6 @@ public class LauncherActivity extends Activity {
             items.remove(srcReal);
             items.add(srcItem);
             saveItems(items);
-            rebuildUi();
             return;
         }
         if (target == src) {
@@ -1904,7 +1908,6 @@ public class LauncherActivity extends Activity {
             items.add(insert, srcItem);
         }
         saveItems(items);
-        rebuildUi();
     }
 
     private List<HomeItem> visibleItems(List<HomeItem> items) {
