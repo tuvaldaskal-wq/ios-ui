@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_top">#FF0E1230</color>
+    <color name="bg_bottom">#FF241A52</color>
+    <color name="bubble_user">#FF0A84FF</color>
+    <color name="bubble_assistant">#26FFFFFF</color>
+    <color name="input_bg">#1FFFFFFF</color>
+    <color name="accent">#FF0A84FF</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="muted">#99FFFFFF</color>
+</resources>
