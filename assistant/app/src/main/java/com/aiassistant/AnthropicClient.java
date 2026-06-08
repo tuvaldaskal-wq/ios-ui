@@ -18,9 +18,15 @@ import java.net.URL;
 public class AnthropicClient {
 
     private final Config config;
+    private String authToken;
 
     public AnthropicClient(Config config) {
         this.config = config;
+    }
+
+    /** Supabase user JWT, sent to the backend so it can identify the user. */
+    public void setAuthToken(String token) {
+        this.authToken = token;
     }
 
     /** One round-trip to the model. Returns the parsed response JSON. */
@@ -54,6 +60,12 @@ public class AnthropicClient {
         if (!backend) {
             conn.setRequestProperty("x-api-key", config.apiKey);
             conn.setRequestProperty("anthropic-version", "2023-06-01");
+        } else {
+            // Supabase Edge Function: identify the app + the signed-in user.
+            conn.setRequestProperty("apikey", BuildConfig.SUPABASE_ANON_KEY);
+            String bearer = (authToken != null && authToken.length() > 0)
+                    ? authToken : BuildConfig.SUPABASE_ANON_KEY;
+            conn.setRequestProperty("Authorization", "Bearer " + bearer);
         }
 
         byte[] out = body.toString().getBytes("UTF-8");

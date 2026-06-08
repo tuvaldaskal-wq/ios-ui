@@ -1,0 +1,321 @@
+package com.aiassistant;
+
+import android.app.Activity;
+import android.content.Intent;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.os.Bundle;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.TextView;
+
+import java.util.ArrayList;
+import java.util.Locale;
+
+/** Black screen with a glowing orb that wiggles to the rhythm of speech. */
+public class VoiceActivity extends Activity {
+
+    private static final int REQ_PERMS = 201;
+
+    private Config config;
+    private Agent agent;
+    private TextToSpeech tts;
+    private boolean ttsReady;
+
+    private OrbView orb;
+    private TextView caption;
+    private TextView hint;
+    private SpeechRecognizer recognizer;
+    private boolean listening;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        // Require sign-in if a Supabase backend is configured.
+        if (Supabase.isConfigured(this) && SupabaseAuth.getToken(this) == null) {
+            startActivity(new Intent(this, AuthActivity.class));
+            finish();
+            return;
+        }
+
+        config = new Config(this);
+        agent = new Agent(this, config);
+        setContentView(buildUi());
+
+        tts = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
+            @Override
+            public void onInit(int status) {
+                ttsReady = status == TextToSpeech.SUCCESS;
+                if (ttsReady) {
+                    tts.setLanguage(Locale.getDefault());
+                    tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                        @Override
+                        public void onStart(String id) {
+                            runOnUiThread(new Runnable() {
+                                public void run() {
+                                    orb.setState(OrbView.SPEAKING);
+                                }
+                            });
+                        }
+                        @Override
+                        public void onDone(String id) {
+                            runOnUiThread(new Runnable() {
+                                public void run() {
+                                    orb.setState(OrbView.IDLE);
+                                }
+                            });
+                        }
+                        @Override
+                        public void onError(String id) {
+                            runOnUiThread(new Runnable() {
+                                public void run() {
+                                    orb.setState(OrbView.IDLE);
+                                }
+                            });
+                        }
+                    });
+                }
+            }
+        });
+
+        requestPerms();
+
+        if (!config.isConfigured()) {
+            caption.setText("Add your API key (or sign in to a configured build) to start.");
+        }
+    }
+
+    private void requestPerms() {
+        if (android.os.Build.VERSION.SDK_INT < 23) {
+            return;
+        }
+        try {
+            requestPermissions(new String[]{
+                    android.Manifest.permission.RECORD_AUDIO,
+                    android.Manifest.permission.SEND_SMS,
+                    android.Manifest.permission.CALL_PHONE,
+                    android.Manifest.permission.READ_CONTACTS
+            }, REQ_PERMS);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private View buildUi() {
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Color.BLACK);
+        root.setFitsSystemWindows(true);
+
+        orb = new OrbView(this);
+        int size = (int) (getResources().getDisplayMetrics().widthPixels * 0.8);
+        FrameLayout.LayoutParams orbLp = new FrameLayout.LayoutParams(size, size);
+        orbLp.gravity = Gravity.CENTER;
+        orb.setLayoutParams(orbLp);
+        orb.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                toggleListen();
+            }
+        });
+        root.addView(orb);
+
+        hint = new TextView(this);
+        hint.setText("Tap the orb to talk");
+        hint.setTextColor(Color.parseColor("#80FFFFFF"));
+        hint.setTextSize(15f);
+        FrameLayout.LayoutParams hintLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        hintLp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        hintLp.topMargin = dp(64);
+        root.addView(hint, hintLp);
+
+        caption = new TextView(this);
+        caption.setTextColor(Color.parseColor("#E6FFFFFF"));
+        caption.setTextSize(17f);
+        caption.setGravity(Gravity.CENTER);
+        caption.setPadding(dp(28), 0, dp(28), 0);
+        FrameLayout.LayoutParams capLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        capLp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        capLp.bottomMargin = dp(80);
+        root.addView(caption, capLp);
+
+        // Keyboard button → text chat
+        TextView keyboard = corner("⌨", Gravity.TOP | Gravity.END, dp(14));
+        keyboard.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new Intent(VoiceActivity.this, ChatActivity.class));
+            }
+        });
+        root.addView(keyboard);
+
+        return root;
+    }
+
+    private TextView corner(String glyph, int gravity, int margin) {
+        TextView t = new TextView(this);
+        t.setText(glyph);
+        t.setTextColor(Color.WHITE);
+        t.setTextSize(22f);
+        t.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+        t.setPadding(dp(12), dp(12), dp(12), dp(12));
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.gravity = gravity;
+        lp.topMargin = margin;
+        lp.rightMargin = margin;
+        t.setLayoutParams(lp);
+        return t;
+    }
+
+    // ------------------------------------------------------------------
+    // Listening
+    // ------------------------------------------------------------------
+
+    private void toggleListen() {
+        if (listening) {
+            stopListen();
+            return;
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            caption.setText("Voice recognition isn't available — tap ⌨ to type.");
+            return;
+        }
+        try {
+            recognizer = SpeechRecognizer.createSpeechRecognizer(this);
+            recognizer.setRecognitionListener(listener);
+            Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+            listening = true;
+            hint.setText("Listening…");
+            orb.setState(OrbView.LISTENING);
+            recognizer.startListening(i);
+        } catch (Exception e) {
+            caption.setText("Couldn't start listening.");
+            stopListen();
+        }
+    }
+
+    private void stopListen() {
+        listening = false;
+        hint.setText("Tap the orb to talk");
+        if (recognizer != null) {
+            try {
+                recognizer.stopListening();
+                recognizer.destroy();
+            } catch (Exception ignored) {
+            }
+            recognizer = null;
+        }
+        orb.setLevel(0f);
+    }
+
+    private final RecognitionListener listener = new RecognitionListener() {
+        @Override
+        public void onReadyForSpeech(Bundle params) {
+            orb.setState(OrbView.LISTENING);
+        }
+        @Override
+        public void onRmsChanged(float rmsdB) {
+            float level = (rmsdB + 2f) / 12f; // ~ -2..10 dB -> 0..1
+            orb.setLevel(level);
+        }
+        @Override
+        public void onResults(Bundle results) {
+            ArrayList<String> list = results.getStringArrayList(
+                    SpeechRecognizer.RESULTS_RECOGNITION);
+            stopListen();
+            if (list != null && !list.isEmpty()) {
+                process(list.get(0));
+            }
+        }
+        @Override
+        public void onPartialResults(Bundle partial) {
+            ArrayList<String> list = partial.getStringArrayList(
+                    SpeechRecognizer.RESULTS_RECOGNITION);
+            if (list != null && !list.isEmpty()) {
+                caption.setText(list.get(0));
+            }
+        }
+        @Override
+        public void onError(int error) {
+            stopListen();
+            orb.setState(OrbView.IDLE);
+        }
+        @Override public void onBeginningOfSpeech() { }
+        @Override public void onEndOfSpeech() { orb.setState(OrbView.THINKING); }
+        @Override public void onBufferReceived(byte[] buffer) { }
+        @Override public void onEvent(int eventType, Bundle params) { }
+    };
+
+    private void process(String text) {
+        caption.setText(text);
+        if (!config.isConfigured()) {
+            caption.setText("No API key / sign-in configured.");
+            return;
+        }
+        orb.setState(OrbView.THINKING);
+        agent.send(text, new Agent.Listener() {
+            @Override
+            public void onStatus(String note) {
+                caption.setText(note);
+            }
+            @Override
+            public void onResult(String reply) {
+                caption.setText(reply);
+                speak(reply);
+            }
+            @Override
+            public void onError(String message) {
+                orb.setState(OrbView.IDLE);
+                caption.setText("⚠ " + message);
+            }
+        });
+    }
+
+    private void speak(String text) {
+        if (ttsReady && text != null && text.length() > 0) {
+            orb.setState(OrbView.SPEAKING);
+            tts.speak(text.length() > 600 ? text.substring(0, 600) : text,
+                    TextToSpeech.QUEUE_FLUSH, null, "aria");
+        } else {
+            orb.setState(OrbView.IDLE);
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        // Home/voice screen — don't exit.
+        if (listening) {
+            stopListen();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (tts != null) {
+            tts.shutdown();
+        }
+        if (recognizer != null) {
+            try {
+                recognizer.destroy();
+            } catch (Exception ignored) {
+            }
+        }
+        super.onDestroy();
+    }
+
+    private int dp(float v) {
+        return Math.round(v * getResources().getDisplayMetrics().density);
+    }
+}

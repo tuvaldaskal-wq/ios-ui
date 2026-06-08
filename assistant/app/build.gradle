@@ -12,6 +12,8 @@ if (localFile.exists()) {
 def anthropicKey = localProps.getProperty("ANTHROPIC_API_KEY", "")
 def anthropicModel = localProps.getProperty("ANTHROPIC_MODEL", "claude-haiku-4-5")
 def backendUrl = localProps.getProperty("BACKEND_URL", "")
+def supabaseUrl = localProps.getProperty("SUPABASE_URL", "")
+def supabaseAnonKey = localProps.getProperty("SUPABASE_ANON_KEY", "")
 
 android {
     namespace 'com.aiassistant'
@@ -27,6 +29,8 @@ android {
         buildConfigField "String", "ANTHROPIC_API_KEY", "\"${anthropicKey}\""
         buildConfigField "String", "ANTHROPIC_MODEL", "\"${anthropicModel}\""
         buildConfigField "String", "BACKEND_URL", "\"${backendUrl}\""
+        buildConfigField "String", "SUPABASE_URL", "\"${supabaseUrl}\""
+        buildConfigField "String", "SUPABASE_ANON_KEY", "\"${supabaseAnonKey}\""
     }
 
     buildFeatures {

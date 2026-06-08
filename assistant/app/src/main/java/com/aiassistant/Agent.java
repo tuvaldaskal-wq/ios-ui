@@ -32,6 +32,7 @@ public class Agent {
     private final Config config;
     private final AnthropicClient client;
     private final Tools tools;
+    private final Context appContext;
     private final JSONArray history = new JSONArray();
     private final Handler main = new Handler(Looper.getMainLooper());
 
@@ -39,6 +40,7 @@ public class Agent {
         this.config = config;
         this.client = new AnthropicClient(config);
         this.tools = new Tools(ctx);
+        this.appContext = ctx.getApplicationContext();
     }
 
     public void send(final String userText, final Listener listener) {
@@ -62,6 +64,7 @@ public class Agent {
 
     private void runLoop(Listener listener) {
         try {
+            client.setAuthToken(SupabaseAuth.getToken(appContext));
             for (int step = 0; step < 6; step++) {
                 JSONObject resp = client.createMessage(history, Tools.schemas(), SYSTEM);
                 if (resp.has("__http_error")) {

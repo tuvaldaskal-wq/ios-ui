@@ -33,6 +33,8 @@ public final class BuildConfig {
     public static final String ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY:-}";
     public static final String ANTHROPIC_MODEL = "${ANTHROPIC_MODEL:-claude-haiku-4-5}";
     public static final String BACKEND_URL = "${BACKEND_URL:-}";
+    public static final String SUPABASE_URL = "${SUPABASE_URL:-}";
+    public static final String SUPABASE_ANON_KEY = "${SUPABASE_ANON_KEY:-}";
 }
 EOF
 

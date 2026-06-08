@@ -16,23 +16,33 @@
         android:usesCleartextTraffic="false"
         android:hardwareAccelerated="true">
 
+        <!-- The orb voice screen is the main entry + Home app. -->
         <activity
-            android:name=".ChatActivity"
+            android:name=".VoiceActivity"
             android:launchMode="singleTask"
             android:stateNotNeeded="true"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize"
-            android:windowSoftInputMode="adjustResize"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Lets Aria be set as the default Home app. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".ChatActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize"
+            android:windowSoftInputMode="adjustResize"
+            android:exported="false" />
+
+        <activity
+            android:name=".AuthActivity"
+            android:windowSoftInputMode="adjustResize"
+            android:exported="false" />
     </application>
 </manifest>
