@@ -369,7 +369,7 @@ public class LauncherActivity extends Activity {
     }
 
     private View buildHomePage(List<AppInfo> homeApps, int pageWidth) {
-        ScrollView scroll = new ScrollView(this);
+        final GestureScrollView scroll = new GestureScrollView(this);
         scroll.setLayoutParams(new LinearLayout.LayoutParams(
                 pageWidth, ViewGroup.LayoutParams.MATCH_PARENT));
         scroll.setVerticalScrollBarEnabled(false);
@@ -401,15 +401,21 @@ public class LauncherActivity extends Activity {
         // Curated app icons.
         addAppRows(content, homeApps, true);
 
-        // Gestures on empty home space: long-press = menu, double-tap = lock,
-        // swipe down = Spotlight.
+        // Long-press empty home space = edit menu (reliable OnLongClickListener).
+        content.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                showHomeMenu();
+                return true;
+            }
+        });
+
+        // Double-tap = lock, swipe down (at top) = Spotlight. Detector is fed the
+        // full touch stream via GestureScrollView.dispatchTouchEvent, so taps are
+        // never mistaken for long-presses.
         final GestureDetector gestures = new GestureDetector(this,
                 new GestureDetector.SimpleOnGestureListener() {
-                    @Override
-                    public void onLongPress(MotionEvent e) {
-                        content.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-                        showHomeMenu();
-                    }
                     @Override
                     public boolean onDoubleTap(MotionEvent e) {
                         lockScreen();
@@ -418,8 +424,8 @@ public class LauncherActivity extends Activity {
                     @Override
                     public boolean onFling(MotionEvent e1, MotionEvent e2,
                                            float velocityX, float velocityY) {
-                        if (e1 != null && e2 != null
-                                && e2.getY() - e1.getY() > dp(90)
+                        if (e1 != null && e2 != null && scroll.getScrollY() == 0
+                                && e2.getY() - e1.getY() > dp(110)
                                 && Math.abs(velocityY) > Math.abs(velocityX)
                                 && velocityY > 0) {
                             showSpotlight();
@@ -428,13 +434,7 @@ public class LauncherActivity extends Activity {
                         return false;
                     }
                 });
-        content.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                gestures.onTouchEvent(event);
-                return false;
-            }
-        });
+        scroll.setDetector(gestures);
 
         scroll.addView(content);
         return scroll;
