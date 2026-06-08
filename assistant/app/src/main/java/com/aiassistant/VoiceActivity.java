@@ -352,16 +352,16 @@ public class VoiceActivity extends Activity {
         // else: no gate (local/dev build)
     }
 
-    /** Read the plan from the signed-in account; unlock if it's pro. */
+    /** Unlock if the signed-in account is subscribed (pro) OR an admin. */
     private void checkPlan() {
         new Thread(new Runnable() {
             @Override
             public void run() {
-                final String plan = SupabaseDb.getPlan(VoiceActivity.this);
+                final boolean entitled = SupabaseDb.isEntitled(VoiceActivity.this);
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        if ("pro".equalsIgnoreCase(plan)) {
+                        if (entitled) {
                             hidePaywall();
                         } else {
                             showPaywall();

@@ -35,6 +35,24 @@ public final class SupabaseDb {
         return "";
     }
 
+    /** True if the account may use Aria: a paid plan OR an admin account. */
+    public static boolean isEntitled(Context ctx) {
+        try {
+            String body = request(ctx, "GET",
+                    "/rest/v1/profiles?select=plan,is_admin", null, "return=representation");
+            JSONArray arr = new JSONArray(body);
+            if (arr.length() > 0) {
+                JSONObject o = arr.getJSONObject(0);
+                if (o.optBoolean("is_admin", false)) {
+                    return true;
+                }
+                return "pro".equalsIgnoreCase(o.optString("plan", "free"));
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
+    }
+
     /** Mark the signed-in account as subscribed (called after a Play purchase). */
     public static void setPlanPro(Context ctx) {
         try {
