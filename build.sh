@@ -17,7 +17,9 @@ AAPT2="${AAPT2:-aapt2}"
 ZIPALIGN="${ZIPALIGN:-zipalign}"
 APKSIGNER="${APKSIGNER:-apksigner}"
 MIN_SDK=21
-TARGET_SDK=23
+# Target a modern API level so current Android versions / strict OEMs accept the
+# install. We still compile against android.jar 23 (only <=23 APIs are used).
+TARGET_SDK=34
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP="$ROOT/app"
