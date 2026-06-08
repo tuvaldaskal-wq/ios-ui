@@ -38,16 +38,27 @@ public final class Tools {
         tools.put(tool("send_sms", "Send a text message (SMS) silently in the background.",
                 props2("to", "A phone number or a contact name (e.g. 'Mom')",
                         "message", "The text to send"), "to,message"));
-        tools.put(tool("send_whatsapp", "Compose a WhatsApp message to a contact/number (opens WhatsApp with the message pre-filled to send).",
+        tools.put(tool("send_whatsapp", "Send a WhatsApp message to a contact/number. Opens the chat with the text pre-filled and (if Aria's accessibility is enabled) taps Send automatically.",
                 props2("to", "A phone number or contact name",
                         "message", "The message text"), "to,message"));
         tools.put(tool("call", "Start a phone call to a number or contact.",
                 prop("to", "A phone number or contact name"), "to"));
-        tools.put(tool("set_timer", "Start a countdown timer.",
+        tools.put(tool("set_timer", "Start a countdown timer. Use this for durations like 'in 10 minutes'.",
                 propInt("seconds", "Length of the timer in seconds"), "seconds"));
-        tools.put(tool("set_alarm", "Set an alarm clock.",
+        tools.put(tool("set_alarm", "Set an alarm for a clock time (e.g. '7am' = hour 7, minute 0). Use get_device_info first if you need the current time for a relative request.",
                 props3int("hour", "Hour 0-23", "minute", "Minute 0-59",
                         "label", false), "hour,minute"));
+        tools.put(tool("flashlight", "Turn the phone flashlight (torch) on or off.",
+                propBool("on", "true to turn on, false to turn off"), "on"));
+        tools.put(tool("set_volume", "Set the media volume.",
+                propInt("percent", "Volume from 0 to 100"), "percent"));
+        tools.put(tool("navigate", "Start turn-by-turn navigation to a place or address in Maps.",
+                prop("destination", "Where to navigate to"), "destination"));
+        tools.put(tool("send_email", "Compose an email (opens the email app pre-filled to send).",
+                props3("to", "Recipient email address",
+                        "subject", "Email subject", "body", "Email body"), "to"));
+        tools.put(tool("get_device_info", "Get the current time, date and battery level. Use this when you need 'now' to compute alarms/timers or to answer time/battery questions.",
+                new JSONObject(), null));
         tools.put(tool("web_search", "Search the web.",
                 prop("query", "What to search for"), "query"));
         tools.put(tool("open_url", "Open a web page / URL in the browser.",
@@ -72,6 +83,16 @@ public final class Tools {
                 return setTimer(in.optInt("seconds"));
             } else if ("set_alarm".equals(name)) {
                 return setAlarm(in.optInt("hour"), in.optInt("minute"), in.optString("label"));
+            } else if ("flashlight".equals(name)) {
+                return flashlight(in.optBoolean("on"));
+            } else if ("set_volume".equals(name)) {
+                return setVolume(in.optInt("percent"));
+            } else if ("navigate".equals(name)) {
+                return navigate(in.optString("destination"));
+            } else if ("send_email".equals(name)) {
+                return sendEmail(in.optString("to"), in.optString("subject"), in.optString("body"));
+            } else if ("get_device_info".equals(name)) {
+                return deviceInfo();
             } else if ("web_search".equals(name)) {
                 return webSearch(in.optString("query"));
             } else if ("open_url".equals(name)) {
@@ -158,9 +179,93 @@ public final class Tools {
         String digits = number.replaceAll("[^0-9]", "");
         Uri uri = Uri.parse("https://wa.me/" + digits + "?text=" + Uri.encode(message));
         Intent i = new Intent(Intent.ACTION_VIEW, uri);
+        i.setPackage("com.whatsapp");
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        // Arm the accessibility service to tap Send automatically (if enabled).
+        AriaAccessibilityService.armWhatsAppSend();
+        try {
+            ctx.startActivity(i);
+        } catch (Exception e) {
+            i.setPackage(null);
+            ctx.startActivity(i);
+        }
+        return "Messaged " + to + " on WhatsApp.";
+    }
+
+    private String flashlight(boolean on) {
+        try {
+            android.hardware.camera2.CameraManager cm =
+                    (android.hardware.camera2.CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
+            String[] ids = cm.getCameraIdList();
+            for (int i = 0; i < ids.length; i++) {
+                Boolean hasFlash = cm.getCameraCharacteristics(ids[i])
+                        .get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE);
+                if (Boolean.TRUE.equals(hasFlash)) {
+                    cm.setTorchMode(ids[i], on);
+                    return on ? "Flashlight on." : "Flashlight off.";
+                }
+            }
+            return "No flashlight on this device.";
+        } catch (Exception e) {
+            return "Couldn't toggle the flashlight.";
+        }
+    }
+
+    private String setVolume(int percent) {
+        if (percent < 0) {
+            percent = 0;
+        }
+        if (percent > 100) {
+            percent = 100;
+        }
+        android.media.AudioManager am =
+                (android.media.AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+        int max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC);
+        am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC,
+                Math.round(max * (percent / 100f)), 0);
+        return "Volume set to " + percent + "%.";
+    }
+
+    private String navigate(String destination) {
+        Intent i = new Intent(Intent.ACTION_VIEW,
+                Uri.parse("google.navigation:q=" + Uri.encode(destination)));
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            ctx.startActivity(i);
+        } catch (Exception e) {
+            return openUrl("https://www.google.com/maps/dir/?api=1&destination="
+                    + Uri.encode(destination));
+        }
+        return "Navigating to " + destination + ".";
+    }
+
+    private String sendEmail(String to, String subject, String body) {
+        Intent i = new Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:"
+                + (to == null ? "" : to)));
+        if (subject != null) {
+            i.putExtra(Intent.EXTRA_SUBJECT, subject);
+        }
+        if (body != null) {
+            i.putExtra(Intent.EXTRA_TEXT, body);
+        }
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         ctx.startActivity(i);
-        return "Opened WhatsApp to " + to + " with the message ready to send.";
+        return "Opened an email to " + to + " ready to send.";
+    }
+
+    private String deviceInfo() {
+        java.text.SimpleDateFormat fmt =
+                new java.text.SimpleDateFormat("EEEE, d MMM yyyy, HH:mm", java.util.Locale.getDefault());
+        String now = fmt.format(new java.util.Date());
+        String battery = "";
+        try {
+            android.os.BatteryManager bm =
+                    (android.os.BatteryManager) ctx.getSystemService(Context.BATTERY_SERVICE);
+            int level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY);
+            battery = ", battery " + level + "%";
+        } catch (Exception ignored) {
+        }
+        return "Current time: " + now + battery + ".";
     }
 
     private String call(String to) {
@@ -298,6 +403,29 @@ public final class Tools {
         try {
             JSONObject p = new JSONObject();
             p.put(name, field("integer", desc));
+            return p;
+        } catch (Exception e) {
+            return new JSONObject();
+        }
+    }
+
+    private static JSONObject propBool(String name, String desc) {
+        try {
+            JSONObject p = new JSONObject();
+            p.put(name, field("boolean", desc));
+            return p;
+        } catch (Exception e) {
+            return new JSONObject();
+        }
+    }
+
+    private static JSONObject props3(String n1, String d1, String n2, String d2,
+                                     String n3, String d3) {
+        try {
+            JSONObject p = new JSONObject();
+            p.put(n1, field("string", d1));
+            p.put(n2, field("string", d2));
+            p.put(n3, field("string", d3));
             return p;
         } catch (Exception e) {
             return new JSONObject();

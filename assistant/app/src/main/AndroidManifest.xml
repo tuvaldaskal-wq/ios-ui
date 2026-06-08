@@ -75,5 +75,18 @@
                 android:name="android.speech"
                 android:resource="@xml/recognition_service" />
         </service>
+
+        <!-- Lets Aria auto-tap Send in WhatsApp (user enables it once). -->
+        <service
+            android:name=".AriaAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service" />
+        </service>
     </application>
 </manifest>
