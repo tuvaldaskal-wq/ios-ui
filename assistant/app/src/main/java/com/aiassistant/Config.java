@@ -3,11 +3,11 @@ package com.aiassistant;
 import android.content.Context;
 
 /**
- * Reads configuration from the (gitignored) secrets.xml resource — the API key
- * is hardcoded there at build time.
+ * Configuration, hardcoded into the build via BuildConfig fields populated from
+ * local.properties (gitignored — your key stays on your machine).
  *
- * Public/paid build: leave the key empty and set backend_url to your server
- * (which holds the key and verifies the subscription).
+ * Public/paid build: leave ANTHROPIC_API_KEY empty and set BACKEND_URL to your
+ * server (which holds the key and verifies the subscription).
  */
 public final class Config {
 
@@ -16,10 +16,10 @@ public final class Config {
     public final String backendUrl;
 
     public Config(Context ctx) {
-        apiKey = str(ctx, "anthropic_api_key");
-        String m = str(ctx, "anthropic_model");
+        apiKey = BuildConfig.ANTHROPIC_API_KEY == null ? "" : BuildConfig.ANTHROPIC_API_KEY.trim();
+        String m = BuildConfig.ANTHROPIC_MODEL == null ? "" : BuildConfig.ANTHROPIC_MODEL.trim();
         model = m.isEmpty() ? "claude-haiku-4-5" : m;
-        backendUrl = str(ctx, "backend_url");
+        backendUrl = BuildConfig.BACKEND_URL == null ? "" : BuildConfig.BACKEND_URL.trim();
     }
 
     public boolean useBackend() {
@@ -28,14 +28,5 @@ public final class Config {
 
     public boolean isConfigured() {
         return useBackend() || (apiKey != null && apiKey.length() > 0);
-    }
-
-    private static String str(Context ctx, String name) {
-        int id = ctx.getResources().getIdentifier(name, "string", ctx.getPackageName());
-        if (id == 0) {
-            return "";
-        }
-        String s = ctx.getString(id);
-        return s == null ? "" : s.trim();
     }
 }

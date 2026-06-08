@@ -10,11 +10,10 @@ dist/*.idsig
 # Assistant project
 /assistant/build/
 /assistant/debug.keystore
-# Secrets (API keys) must never be committed
-/assistant/app/src/main/res/values/secrets.xml
 # Do not publish assistant APKs (may embed a key in local builds)
 /assistant/dist/
-# Gradle / Android Studio build output and local config
+# Gradle / Android Studio build output and local config.
+# local.properties holds the API key (ANTHROPIC_API_KEY) and must never be committed.
 /assistant/.gradle/
 /assistant/app/build/
 /assistant/local.properties

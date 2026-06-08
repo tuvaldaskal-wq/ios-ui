@@ -2,6 +2,17 @@ plugins {
     id 'com.android.application'
 }
 
+// Read secrets from local.properties (gitignored) so they never get committed.
+// Falls back to empty/defaults, so the project always builds out of the box.
+def localProps = new Properties()
+def localFile = rootProject.file("local.properties")
+if (localFile.exists()) {
+    localFile.withInputStream { localProps.load(it) }
+}
+def anthropicKey = localProps.getProperty("ANTHROPIC_API_KEY", "")
+def anthropicModel = localProps.getProperty("ANTHROPIC_MODEL", "claude-haiku-4-5")
+def backendUrl = localProps.getProperty("BACKEND_URL", "")
+
 android {
     namespace 'com.aiassistant'
     compileSdk 34
@@ -12,6 +23,14 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0"
+
+        buildConfigField "String", "ANTHROPIC_API_KEY", "\"${anthropicKey}\""
+        buildConfigField "String", "ANTHROPIC_MODEL", "\"${anthropicModel}\""
+        buildConfigField "String", "BACKEND_URL", "\"${backendUrl}\""
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     buildTypes {

@@ -21,14 +21,20 @@ OUT="$ROOT/dist"
 KEYSTORE="$ROOT/debug.keystore"
 PACKAGE="com.aiassistant"
 
-# Ensure a secrets.xml exists (gitignored). Falls back to the example.
-if [ ! -f "$APP/res/values/secrets.xml" ]; then
-    cp "$ROOT/secrets.example.xml" "$APP/res/values/secrets.xml"
-    echo "    created secrets.xml from template (empty key)"
-fi
-
 rm -rf "$BUILD"
 mkdir -p "$BUILD/compiled" "$BUILD/gen" "$BUILD/classes" "$OUT"
+
+# Generate BuildConfig.java (Gradle does this from local.properties; this offline
+# build injects empty/default values, or reads them from the environment).
+mkdir -p "$BUILD/gen/com/aiassistant"
+cat > "$BUILD/gen/com/aiassistant/BuildConfig.java" <<EOF
+package com.aiassistant;
+public final class BuildConfig {
+    public static final String ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY:-}";
+    public static final String ANTHROPIC_MODEL = "${ANTHROPIC_MODEL:-claude-haiku-4-5}";
+    public static final String BACKEND_URL = "${BACKEND_URL:-}";
+}
+EOF
 
 # The manifest (Gradle-style) has no package attribute; aapt2 needs one.
 # Inject it into a temporary copy so this offline build keeps working.

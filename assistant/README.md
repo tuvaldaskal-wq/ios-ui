@@ -17,19 +17,19 @@ shared and never committed (the key file is gitignored).
 2. **Open the project:** Android Studio → *Open* → select this `assistant`
    folder. Let it finish "Gradle sync" (it downloads Gradle/AGP the first time).
 
-3. **Put your key in** `app/src/main/res/values/secrets.xml`:
+3. **Put your key in** `local.properties` (in the `assistant/` folder — Android
+   Studio creates this file automatically on first sync). Add these lines:
 
-   ```xml
-   <resources>
-       <string name="anthropic_api_key">sk-ant-api03-...your key...</string>
-       <string name="anthropic_model">claude-haiku-4-5</string>
-       <string name="backend_url"></string>
-   </resources>
+   ```properties
+   ANTHROPIC_API_KEY=sk-ant-api03-...your key...
+   ANTHROPIC_MODEL=claude-haiku-4-5
    ```
 
    - Get a key at https://console.anthropic.com → API keys.
-   - This file is **gitignored**, so your key never leaves your machine.
-   - If the file isn't there yet, copy `secrets.example.xml` to that path.
+   - `local.properties` is **gitignored**, so your key never leaves your machine.
+   - The project **builds without it** too — you'll just get a "configure your
+     key" message in the app until you add the line and rebuild.
+   - Gradle bakes the value into `BuildConfig.ANTHROPIC_API_KEY` at compile time.
 
 4. **Plug in your phone** (USB debugging on), pick it in the device dropdown,
    and press **Run ▶**. Android Studio builds, installs, and launches Aria.
@@ -58,9 +58,9 @@ assistant/
     src/main/
       AndroidManifest.xml
       java/com/aiassistant/           # Agent, Tools, AnthropicClient, ChatActivity…
-      res/values/secrets.xml          # YOUR KEY (gitignored)
+      res/                            # icons, colors, styles
   build.gradle, settings.gradle       # Gradle project
   gradlew, gradlew.bat, gradle/       # Gradle wrapper
-  secrets.example.xml                 # template to copy
+  local.properties                    # YOUR KEY (gitignored, you create/edit)
   build.sh                            # offline CI build (Debian Android tools)
 ```
