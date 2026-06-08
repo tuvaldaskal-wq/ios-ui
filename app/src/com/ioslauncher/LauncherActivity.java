@@ -27,6 +27,8 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
+import android.view.animation.DecelerateInterpolator;
+import android.view.animation.TranslateAnimation;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -364,7 +366,12 @@ public class LauncherActivity extends Activity {
             return null;
         }
 
-        FrameLayout card = new FrameLayout(this);
+        WidgetCard card = new WidgetCard(this, new WidgetCard.OnHold() {
+            @Override
+            public void onHold() {
+                showWidgetOptions(widgetId, String.valueOf(info.loadLabel(getPackageManager())));
+            }
+        });
         card.setBackgroundResource(R.drawable.widget_card);
         final float radius = dp(22);
         card.setOutlineProvider(new ViewOutlineProvider() {
@@ -381,14 +388,6 @@ public class LauncherActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         card.setLayoutParams(new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, height));
-
-        card.setOnLongClickListener(new View.OnLongClickListener() {
-            @Override
-            public boolean onLongClick(View v) {
-                confirmRemoveWidget(widgetId, String.valueOf(info.loadLabel(getPackageManager())));
-                return true;
-            }
-        });
         return card;
     }
 
@@ -512,21 +511,125 @@ public class LauncherActivity extends Activity {
     // Home editing: choose apps + add/remove widgets
     // ------------------------------------------------------------------
 
+    private interface SheetListener {
+        void onSelect(int index);
+    }
+
     private void showHomeMenu() {
-        final CharSequence[] items = {"Add Widget", "Choose Home Apps"};
-        new AlertDialog.Builder(this)
-                .setTitle("Edit Home Screen")
-                .setItems(items, new DialogInterface.OnClickListener() {
+        showActionSheet("Edit Home Screen",
+                new String[]{"Add Widget", "Choose Home Apps"},
+                null,
+                new SheetListener() {
                     @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        if (which == 0) {
-                            showWidgetPicker();
+                    public void onSelect(int index) {
+                        if (index == 0) {
+                            showWidgetGallery();
                         } else {
                             showAppChooser();
                         }
                     }
-                })
-                .show();
+                });
+    }
+
+    /** iOS-style bottom action sheet with a separate Cancel button. */
+    private void showActionSheet(String title, final String[] options,
+                                 final boolean[] destructive, final SheetListener listener) {
+        final FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(Color.parseColor("#66000000"));
+        overlay.setClickable(true);
+        overlay.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                rootView.removeView(overlay);
+            }
+        });
+
+        LinearLayout sheet = new LinearLayout(this);
+        sheet.setOrientation(LinearLayout.VERTICAL);
+        FrameLayout.LayoutParams sheetLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sheetLp.gravity = Gravity.BOTTOM;
+        sheet.setLayoutParams(sheetLp);
+        sheet.setPadding(dp(10), dp(10), dp(10), dp(16));
+
+        LinearLayout group = new LinearLayout(this);
+        group.setOrientation(LinearLayout.VERTICAL);
+        group.setBackgroundResource(R.drawable.action_group_bg);
+
+        if (title != null) {
+            TextView t = new TextView(this);
+            t.setText(title);
+            t.setTextColor(Color.parseColor("#8A8A8E"));
+            t.setTextSize(13f);
+            t.setGravity(Gravity.CENTER);
+            t.setPadding(dp(16), dp(16), dp(16), dp(14));
+            group.addView(t);
+            group.addView(divider());
+        }
+        for (int i = 0; i < options.length; i++) {
+            final int idx = i;
+            boolean dest = destructive != null && i < destructive.length && destructive[i];
+            TextView b = new TextView(this);
+            b.setText(options[i]);
+            b.setTextColor(dest ? Color.parseColor("#FF3B30") : Color.parseColor("#0A84FF"));
+            b.setTextSize(19f);
+            b.setGravity(Gravity.CENTER);
+            b.setPadding(dp(16), dp(17), dp(16), dp(17));
+            b.setClickable(true);
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    rootView.removeView(overlay);
+                    listener.onSelect(idx);
+                }
+            });
+            group.addView(b);
+            if (i < options.length - 1) {
+                group.addView(divider());
+            }
+        }
+        sheet.addView(group, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout cancelGroup = new LinearLayout(this);
+        cancelGroup.setBackgroundResource(R.drawable.action_group_bg);
+        TextView cancel = new TextView(this);
+        cancel.setText("Cancel");
+        cancel.setTextColor(Color.parseColor("#0A84FF"));
+        cancel.setTextSize(19f);
+        cancel.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+        cancel.setGravity(Gravity.CENTER);
+        cancel.setPadding(dp(16), dp(17), dp(16), dp(17));
+        cancel.setClickable(true);
+        cancel.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                rootView.removeView(overlay);
+            }
+        });
+        cancelGroup.addView(cancel, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams cgLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cgLp.topMargin = dp(8);
+        sheet.addView(cancelGroup, cgLp);
+
+        overlay.addView(sheet);
+        rootView.addView(overlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        TranslateAnimation anim = new TranslateAnimation(0, 0, dp(360), 0);
+        anim.setDuration(220);
+        anim.setInterpolator(new DecelerateInterpolator());
+        sheet.startAnimation(anim);
+    }
+
+    private View divider() {
+        View d = new View(this);
+        d.setBackgroundColor(Color.parseColor("#D1D1D6"));
+        d.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(0.5f))));
+        return d;
     }
 
     private void showAppChooser() {
@@ -564,13 +667,15 @@ public class LauncherActivity extends Activity {
                 .show();
     }
 
-    private void showWidgetPicker() {
+    /** Full-screen widget gallery with a live preview image for each widget. */
+    private void showWidgetGallery() {
         final List<AppWidgetProviderInfo> providers = appWidgetManager.getInstalledProviders();
         if (providers == null || providers.isEmpty()) {
-            new AlertDialog.Builder(this)
-                    .setMessage("No widgets are available on this device.")
-                    .setPositiveButton("OK", null)
-                    .show();
+            showActionSheet("No widgets are available on this device.",
+                    new String[]{"OK"}, null, new SheetListener() {
+                        @Override
+                        public void onSelect(int index) { }
+                    });
             return;
         }
         Collections.sort(providers, new Comparator<AppWidgetProviderInfo>() {
@@ -579,19 +684,140 @@ public class LauncherActivity extends Activity {
                 return providerLabel(a).compareToIgnoreCase(providerLabel(b));
             }
         });
-        final String[] labels = new String[providers.size()];
+
+        final FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(Color.parseColor("#F2000000"));
+        overlay.setClickable(true);
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(16), getStatusBarHeight() + dp(14), dp(16), dp(8));
+
+        // Header: title + Done.
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = new TextView(this);
+        title.setText("Widgets");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(26f);
+        title.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        header.addView(title, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView done = new TextView(this);
+        done.setText("Done");
+        done.setTextColor(Color.parseColor("#0A84FF"));
+        done.setTextSize(17f);
+        done.setPadding(dp(10), dp(8), dp(6), dp(8));
+        done.setClickable(true);
+        done.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                rootView.removeView(overlay);
+            }
+        });
+        header.addView(done);
+        panel.addView(header, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView hint = new TextView(this);
+        hint.setText("Tap a widget to add it to your Home Screen");
+        hint.setTextColor(Color.parseColor("#99FFFFFF"));
+        hint.setTextSize(13f);
+        hint.setPadding(0, dp(4), 0, dp(12));
+        panel.addView(hint);
+
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.addView(list);
+
+        int density = getResources().getDisplayMetrics().densityDpi;
         for (int i = 0; i < providers.size(); i++) {
-            labels[i] = providerLabel(providers.get(i));
+            final AppWidgetProviderInfo info = providers.get(i);
+            list.addView(buildGalleryCard(info, density, overlay));
         }
-        new AlertDialog.Builder(this)
-                .setTitle("Add Widget")
-                .setItems(labels, new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        addWidget(providers.get(which));
-                    }
-                })
-                .show();
+
+        panel.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        overlay.addView(panel, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        rootView.addView(overlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private View buildGalleryCard(final AppWidgetProviderInfo info, int density,
+                                  final View overlay) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackgroundResource(R.drawable.widget_card);
+        card.setPadding(dp(14), dp(14), dp(14), dp(14));
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cardLp.bottomMargin = dp(14);
+        card.setLayoutParams(cardLp);
+
+        // Preview image (falls back to the provider/app icon).
+        Drawable preview = null;
+        try {
+            preview = info.loadPreviewImage(this, density);
+        } catch (Exception ignored) {
+        }
+        if (preview == null) {
+            try {
+                preview = info.loadIcon(this, density);
+            } catch (Exception ignored) {
+            }
+        }
+        ImageView img = new ImageView(this);
+        img.setAdjustViewBounds(true);
+        img.setMaxHeight(dp(180));
+        img.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        if (preview != null) {
+            img.setImageDrawable(preview);
+        }
+        LinearLayout.LayoutParams imgLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        imgLp.bottomMargin = dp(10);
+        card.addView(img, imgLp);
+
+        // Label + estimated size.
+        LinearLayout meta = new LinearLayout(this);
+        meta.setOrientation(LinearLayout.HORIZONTAL);
+        meta.setGravity(Gravity.CENTER_VERTICAL);
+        TextView label = new TextView(this);
+        label.setText(providerLabel(info));
+        label.setTextColor(Color.WHITE);
+        label.setTextSize(16f);
+        label.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        label.setSingleLine(true);
+        label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        meta.addView(label, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView size = new TextView(this);
+        size.setText(widgetSizeText(info));
+        size.setTextColor(Color.parseColor("#99FFFFFF"));
+        size.setTextSize(13f);
+        meta.addView(size);
+        card.addView(meta);
+
+        card.setClickable(true);
+        card.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                rootView.removeView(overlay);
+                addWidget(info);
+            }
+        });
+        return card;
+    }
+
+    private String widgetSizeText(AppWidgetProviderInfo info) {
+        int cell = dp(70);
+        int cols = Math.max(1, Math.round(info.minWidth / (float) cell));
+        int rows = Math.max(1, Math.round(info.minHeight / (float) cell));
+        return cols + "×" + rows;
     }
 
     private String providerLabel(AppWidgetProviderInfo info) {
@@ -663,42 +889,58 @@ public class LauncherActivity extends Activity {
         }
     }
 
-    private void confirmRemoveWidget(final int widgetId, String label) {
-        new AlertDialog.Builder(this)
-                .setTitle("Remove Widget")
-                .setMessage("Remove the " + label + " widget?")
-                .setPositiveButton("Remove", new DialogInterface.OnClickListener() {
+    private void showWidgetOptions(final int widgetId, String label) {
+        showActionSheet(label,
+                new String[]{"Move Up", "Move Down", "Remove Widget"},
+                new boolean[]{false, false, true},
+                new SheetListener() {
                     @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        List<Integer> ids = loadWidgetIds();
-                        ids.remove(Integer.valueOf(widgetId));
-                        saveWidgetIds(ids);
-                        appWidgetHost.deleteAppWidgetId(widgetId);
-                        rebuildUi();
+                    public void onSelect(int index) {
+                        if (index == 0) {
+                            moveWidget(widgetId, -1);
+                        } else if (index == 1) {
+                            moveWidget(widgetId, 1);
+                        } else {
+                            List<Integer> ids = loadWidgetIds();
+                            ids.remove(Integer.valueOf(widgetId));
+                            saveWidgetIds(ids);
+                            appWidgetHost.deleteAppWidgetId(widgetId);
+                            rebuildUi();
+                        }
                     }
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
+                });
+    }
+
+    private void moveWidget(int widgetId, int delta) {
+        List<Integer> ids = loadWidgetIds();
+        int idx = ids.indexOf(Integer.valueOf(widgetId));
+        int target = idx + delta;
+        if (idx < 0 || target < 0 || target >= ids.size()) {
+            return;
+        }
+        Integer moved = ids.remove(idx);
+        ids.add(target, moved);
+        saveWidgetIds(ids);
+        rebuildUi();
     }
 
     private void confirmRemoveApp(final AppInfo app) {
-        new AlertDialog.Builder(this)
-                .setTitle(String.valueOf(app.label))
-                .setItems(new CharSequence[]{"Remove from Home", "App Info"},
-                        new DialogInterface.OnClickListener() {
-                            @Override
-                            public void onClick(DialogInterface dialog, int which) {
-                                if (which == 0) {
-                                    Set<String> chosen = loadChosenKeys(new LinkedHashSet<String>());
-                                    chosen.remove(key(app));
-                                    prefs.edit().putStringSet(KEY_HOME_APPS, chosen).apply();
-                                    rebuildUi();
-                                } else {
-                                    openAppInfo(app.packageName);
-                                }
-                            }
-                        })
-                .show();
+        showActionSheet(String.valueOf(app.label),
+                new String[]{"Remove from Home", "App Info"},
+                new boolean[]{true, false},
+                new SheetListener() {
+                    @Override
+                    public void onSelect(int index) {
+                        if (index == 0) {
+                            Set<String> chosen = loadChosenKeys(new LinkedHashSet<String>());
+                            chosen.remove(key(app));
+                            prefs.edit().putStringSet(KEY_HOME_APPS, chosen).apply();
+                            rebuildUi();
+                        } else {
+                            openAppInfo(app.packageName);
+                        }
+                    }
+                });
     }
 
     private void openAppInfo(String pkg) {
