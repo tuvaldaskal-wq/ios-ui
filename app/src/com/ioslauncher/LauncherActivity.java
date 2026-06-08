@@ -2,11 +2,18 @@ package com.ioslauncher;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.AppOpsManager;
+import android.app.SearchManager;
+import android.app.admin.DevicePolicyManager;
 import android.appwidget.AppWidgetHost;
 import android.appwidget.AppWidgetHostView;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProviderInfo;
+import android.app.usage.UsageStats;
+import android.app.usage.UsageStatsManager;
 import android.content.BroadcastReceiver;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -15,12 +22,20 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.Typeface;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
+import android.media.MediaMetadata;
+import android.media.session.MediaController;
+import android.media.session.MediaSessionManager;
+import android.media.session.PlaybackState;
 import android.os.BatteryManager;
 import android.os.Bundle;
+import android.os.Process;
+import android.provider.Settings;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
@@ -42,9 +57,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -76,6 +93,20 @@ public class LauncherActivity extends Activity {
     private AppWidgetHost appWidgetHost;
     private int pendingWidgetId = -1;
 
+    // Dynamic Island + media
+    private LinearLayout island;
+    private MediaSessionManager mediaManager;
+    private MediaController mediaController;
+    private MediaController.Callback mediaCallback;
+    private MediaSessionManager.OnActiveSessionsChangedListener sessionsListener;
+    private ComponentName listenerComponent;
+    private boolean charging;
+    private int batteryPct = 100;
+
+    // Lock screen
+    private DevicePolicyManager dpm;
+    private ComponentName adminComponent;
+
     private List<AppInfo> allApps = new ArrayList<AppInfo>();
     private final List<View> dots = new ArrayList<View>();
     private final SimpleDateFormat clockFmt = new SimpleDateFormat("h:mm", Locale.getDefault());
@@ -94,9 +125,12 @@ public class LauncherActivity extends Activity {
                 boolean charging = status == BatteryManager.BATTERY_STATUS_CHARGING
                         || status == BatteryManager.BATTERY_STATUS_FULL;
                 int pct = scale > 0 ? Math.round(level * 100f / scale) : level;
+                LauncherActivity.this.charging = charging;
+                LauncherActivity.this.batteryPct = pct;
                 if (statusBar != null) {
                     statusBar.setBattery(pct, charging);
                 }
+                updateIsland();
             } else {
                 updateClock();
             }
@@ -109,6 +143,10 @@ public class LauncherActivity extends Activity {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         appWidgetManager = AppWidgetManager.getInstance(this);
         appWidgetHost = new AppWidgetHost(this, HOST_ID);
+        mediaManager = (MediaSessionManager) getSystemService(Context.MEDIA_SESSION_SERVICE);
+        listenerComponent = new ComponentName(this, MediaListenerService.class);
+        dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
+        adminComponent = new ComponentName(this, AdminReceiver.class);
         applyImmersiveFlags();
         rebuildUi();
         updateClock();
@@ -154,6 +192,7 @@ public class LauncherActivity extends Activity {
         filter.addAction(Intent.ACTION_BATTERY_CHANGED);
         registerReceiver(systemReceiver, filter);
         updateClock();
+        connectMedia();
     }
 
     @Override
@@ -163,6 +202,7 @@ public class LauncherActivity extends Activity {
             unregisterReceiver(systemReceiver);
         } catch (IllegalArgumentException ignored) {
         }
+        disconnectMedia();
     }
 
     @Override
@@ -267,6 +307,20 @@ public class LauncherActivity extends Activity {
         column.addView(buildHomeIndicator());
 
         root.addView(column);
+
+        // Dynamic Island floats on top, centred near the very top of the screen.
+        island = new LinearLayout(this);
+        island.setOrientation(LinearLayout.HORIZONTAL);
+        island.setGravity(Gravity.CENTER_VERTICAL);
+        island.setBackgroundResource(R.drawable.island_bg);
+        island.setVisibility(View.GONE);
+        FrameLayout.LayoutParams islandLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(36));
+        islandLp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        islandLp.topMargin = Math.max(dp(6), getStatusBarHeight() - dp(20));
+        root.addView(island, islandLp);
+        updateIsland();
+
         return root;
     }
 
@@ -280,6 +334,12 @@ public class LauncherActivity extends Activity {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(12), dp(10), dp(12), dp(8));
         content.setMinimumHeight(getResources().getDisplayMetrics().heightPixels);
+
+        // Smart Suggestions row (usage-based), if access has been granted.
+        View suggestions = buildSuggestionsRow();
+        if (suggestions != null) {
+            content.addView(suggestions);
+        }
 
         // Widgets first, each in a rounded frosted card.
         List<Integer> widgetIds = loadWidgetIds();
@@ -517,18 +577,58 @@ public class LauncherActivity extends Activity {
 
     private void showHomeMenu() {
         showActionSheet("Edit Home Screen",
-                new String[]{"Add Widget", "Choose Home Apps"},
-                null,
+                new String[]{"Add Widget", "Choose Home Apps",
+                        "Smart Suggestions Setup", "Dynamic Island Setup", "Lock Screen"},
+                new boolean[]{false, false, false, false, true},
                 new SheetListener() {
                     @Override
                     public void onSelect(int index) {
-                        if (index == 0) {
-                            showWidgetGallery();
-                        } else {
-                            showAppChooser();
+                        switch (index) {
+                            case 0:
+                                showWidgetGallery();
+                                break;
+                            case 1:
+                                showAppChooser();
+                                break;
+                            case 2:
+                                openSettings(Settings.ACTION_USAGE_ACCESS_SETTINGS);
+                                break;
+                            case 3:
+                                openSettings(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+                                break;
+                            case 4:
+                                lockScreen();
+                                break;
+                            default:
+                                break;
                         }
                     }
                 });
+    }
+
+    private void openSettings(String action) {
+        try {
+            startActivity(new Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void lockScreen() {
+        if (dpm != null && dpm.isAdminActive(adminComponent)) {
+            try {
+                dpm.lockNow();
+            } catch (Exception ignored) {
+            }
+        } else {
+            try {
+                Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
+                intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent);
+                intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                        "Enable so iLauncher can lock your screen from the Home menu.");
+                startActivity(intent);
+            } catch (Exception ignored) {
+            }
+        }
     }
 
     /** iOS-style bottom action sheet with a separate Cancel button. */
@@ -954,6 +1054,349 @@ public class LauncherActivity extends Activity {
     }
 
     // ------------------------------------------------------------------
+    // Dynamic Island + Now Playing
+    // ------------------------------------------------------------------
+
+    private void updateIsland() {
+        if (island == null) {
+            return;
+        }
+        island.removeAllViews();
+        if (mediaController != null && mediaTitle() != null) {
+            buildMediaIsland();
+            island.setVisibility(View.VISIBLE);
+        } else if (charging) {
+            buildChargingIsland();
+            island.setVisibility(View.VISIBLE);
+        } else {
+            island.setVisibility(View.GONE);
+        }
+    }
+
+    private void buildChargingIsland() {
+        island.setPadding(dp(15), 0, dp(17), 0);
+        island.addView(glyph("⚡", Color.parseColor("#34C759"), 15f, false));
+        TextView pct = glyph(batteryPct + "%", Color.WHITE, 14f, true);
+        marginStart(pct, dp(5));
+        island.addView(pct);
+    }
+
+    private void buildMediaIsland() {
+        island.setPadding(dp(8), 0, dp(12), 0);
+
+        ImageView thumb = new ImageView(this);
+        int ts = dp(26);
+        Bitmap art = mediaArt();
+        if (art != null) {
+            thumb.setImageDrawable(IconUtils.makeIosIcon(new BitmapDrawable(art), ts));
+        } else {
+            thumb.setImageDrawable(IconUtils.makeIosIcon(null, ts));
+        }
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(ts, ts);
+        tlp.rightMargin = dp(8);
+        island.addView(thumb, tlp);
+
+        TextView title = new TextView(this);
+        title.setText(mediaTitle());
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(12.5f);
+        title.setSingleLine(true);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        title.setMaxWidth(dp(118));
+        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        title.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                launchMediaApp();
+            }
+        });
+        island.addView(title);
+
+        final boolean playing = isPlaying();
+        TextView pp = glyph(playing ? "❚❚" : "▶", Color.WHITE, 13f, false);
+        marginStart(pp, dp(10));
+        pp.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                togglePlay();
+            }
+        });
+        island.addView(pp);
+
+        TextView next = glyph("⏭", Color.WHITE, 14f, false);
+        marginStart(next, dp(10));
+        next.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (mediaController != null) {
+                    mediaController.getTransportControls().skipToNext();
+                }
+            }
+        });
+        island.addView(next);
+    }
+
+    private TextView glyph(String text, int color, float size, boolean medium) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextColor(color);
+        t.setTextSize(size);
+        t.setGravity(Gravity.CENTER);
+        if (medium) {
+            t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        }
+        t.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return t;
+    }
+
+    private LinearLayout.LayoutParams marginStart(View v, int px) {
+        LinearLayout.LayoutParams lp =
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.leftMargin = px;
+        v.setLayoutParams(lp);
+        return lp;
+    }
+
+    private String mediaTitle() {
+        if (mediaController == null) {
+            return null;
+        }
+        MediaMetadata md = mediaController.getMetadata();
+        if (md == null) {
+            return null;
+        }
+        String t = md.getString(MediaMetadata.METADATA_KEY_TITLE);
+        return (t == null || t.trim().length() == 0) ? null : t;
+    }
+
+    private Bitmap mediaArt() {
+        if (mediaController == null) {
+            return null;
+        }
+        MediaMetadata md = mediaController.getMetadata();
+        if (md == null) {
+            return null;
+        }
+        Bitmap b = md.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART);
+        if (b == null) {
+            b = md.getBitmap(MediaMetadata.METADATA_KEY_ART);
+        }
+        return b;
+    }
+
+    private boolean isPlaying() {
+        if (mediaController == null) {
+            return false;
+        }
+        PlaybackState ps = mediaController.getPlaybackState();
+        return ps != null && ps.getState() == PlaybackState.STATE_PLAYING;
+    }
+
+    private void togglePlay() {
+        if (mediaController == null) {
+            return;
+        }
+        if (isPlaying()) {
+            mediaController.getTransportControls().pause();
+        } else {
+            mediaController.getTransportControls().play();
+        }
+    }
+
+    private void launchMediaApp() {
+        if (mediaController == null) {
+            return;
+        }
+        Intent i = getPackageManager().getLaunchIntentForPackage(mediaController.getPackageName());
+        if (i != null) {
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        }
+    }
+
+    private void connectMedia() {
+        if (mediaManager == null) {
+            return;
+        }
+        try {
+            List<MediaController> list = mediaManager.getActiveSessions(listenerComponent);
+            bindController(pickController(list));
+            if (sessionsListener == null) {
+                sessionsListener = new MediaSessionManager.OnActiveSessionsChangedListener() {
+                    @Override
+                    public void onActiveSessionsChanged(List<MediaController> controllers) {
+                        bindController(pickController(controllers));
+                    }
+                };
+            }
+            mediaManager.addOnActiveSessionsChangedListener(sessionsListener, listenerComponent);
+        } catch (SecurityException e) {
+            // Notification access not granted yet.
+        } catch (Exception ignored) {
+        }
+    }
+
+    private MediaController pickController(List<MediaController> list) {
+        if (list == null || list.isEmpty()) {
+            return null;
+        }
+        for (int i = 0; i < list.size(); i++) {
+            PlaybackState ps = list.get(i).getPlaybackState();
+            if (ps != null && ps.getState() == PlaybackState.STATE_PLAYING) {
+                return list.get(i);
+            }
+        }
+        return list.get(0);
+    }
+
+    private void bindController(MediaController c) {
+        if (mediaController != null && mediaCallback != null) {
+            try {
+                mediaController.unregisterCallback(mediaCallback);
+            } catch (Exception ignored) {
+            }
+        }
+        mediaController = c;
+        if (c != null) {
+            mediaCallback = new MediaController.Callback() {
+                @Override
+                public void onPlaybackStateChanged(PlaybackState state) {
+                    updateIsland();
+                }
+                @Override
+                public void onMetadataChanged(MediaMetadata metadata) {
+                    updateIsland();
+                }
+                @Override
+                public void onSessionDestroyed() {
+                    mediaController = null;
+                    updateIsland();
+                }
+            };
+            c.registerCallback(mediaCallback);
+        }
+        updateIsland();
+    }
+
+    private void disconnectMedia() {
+        try {
+            if (mediaManager != null && sessionsListener != null) {
+                mediaManager.removeOnActiveSessionsChangedListener(sessionsListener);
+            }
+        } catch (Exception ignored) {
+        }
+        if (mediaController != null && mediaCallback != null) {
+            try {
+                mediaController.unregisterCallback(mediaCallback);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Smart Suggestions (usage-based)
+    // ------------------------------------------------------------------
+
+    private View buildSuggestionsRow() {
+        if (!hasUsageAccess()) {
+            return null;
+        }
+        List<AppInfo> sugg = loadSuggestions(4);
+        if (sugg.isEmpty()) {
+            return null;
+        }
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams boxLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        boxLp.bottomMargin = dp(8);
+        box.setLayoutParams(boxLp);
+
+        TextView title = new TextView(this);
+        title.setText("SIRI SUGGESTIONS");
+        title.setTextColor(Color.parseColor("#B3FFFFFF"));
+        title.setTextSize(11f);
+        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+        title.setPadding(dp(8), dp(2), 0, dp(2));
+        box.addView(title);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        for (int i = 0; i < sugg.size(); i++) {
+            row.addView(makeAppCell(sugg.get(i), true, false),
+                    new LinearLayout.LayoutParams(0, dp(94), 1f));
+        }
+        for (int i = sugg.size(); i < 4; i++) {
+            row.addView(new View(this), new LinearLayout.LayoutParams(0, dp(94), 1f));
+        }
+        box.addView(row);
+        return box;
+    }
+
+    private boolean hasUsageAccess() {
+        try {
+            AppOpsManager ops = (AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+            int mode = ops.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    Process.myUid(), getPackageName());
+            return mode == AppOpsManager.MODE_ALLOWED;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private List<AppInfo> loadSuggestions(int max) {
+        List<AppInfo> out = new ArrayList<AppInfo>();
+        try {
+            UsageStatsManager usm =
+                    (UsageStatsManager) getSystemService(Context.USAGE_STATS_SERVICE);
+            long now = System.currentTimeMillis();
+            List<UsageStats> stats = usm.queryUsageStats(
+                    UsageStatsManager.INTERVAL_BEST, now - 1000L * 60 * 60 * 24 * 7, now);
+            if (stats == null) {
+                return out;
+            }
+            Map<String, Long> last = new HashMap<String, Long>();
+            for (int i = 0; i < stats.size(); i++) {
+                UsageStats us = stats.get(i);
+                Long cur = last.get(us.getPackageName());
+                if (cur == null || us.getLastTimeUsed() > cur.longValue()) {
+                    last.put(us.getPackageName(), Long.valueOf(us.getLastTimeUsed()));
+                }
+            }
+            Map<String, AppInfo> byPkg = new HashMap<String, AppInfo>();
+            for (int i = 0; i < allApps.size(); i++) {
+                AppInfo a = allApps.get(i);
+                if (!byPkg.containsKey(a.packageName)) {
+                    byPkg.put(a.packageName, a);
+                }
+            }
+            List<Map.Entry<String, Long>> entries =
+                    new ArrayList<Map.Entry<String, Long>>(last.entrySet());
+            Collections.sort(entries, new Comparator<Map.Entry<String, Long>>() {
+                @Override
+                public int compare(Map.Entry<String, Long> a, Map.Entry<String, Long> b) {
+                    return b.getValue().compareTo(a.getValue());
+                }
+            });
+            String self = getPackageName();
+            for (int i = 0; i < entries.size() && out.size() < max; i++) {
+                String p = entries.get(i).getKey();
+                if (p.equals(self)) {
+                    continue;
+                }
+                AppInfo a = byPkg.get(p);
+                if (a != null) {
+                    out.add(a);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
+    // ------------------------------------------------------------------
     // Spotlight search
     // ------------------------------------------------------------------
 
@@ -1035,9 +1478,19 @@ public class LauncherActivity extends Activity {
 
     private void populateResults(LinearLayout container, String query) {
         container.removeAllViews();
-        String q = query.trim().toLowerCase(Locale.getDefault());
+        String raw = query.trim();
+        String q = raw.toLowerCase(Locale.getDefault());
+
+        // Inline calculator.
+        if (raw.length() > 0) {
+            Double val = MathEval.eval(raw);
+            if (val != null) {
+                container.addView(buildCalcRow(raw, val));
+            }
+        }
+
         int shown = 0;
-        for (int i = 0; i < allApps.size() && shown < 60; i++) {
+        for (int i = 0; i < allApps.size() && shown < 50; i++) {
             final AppInfo app = allApps.get(i);
             String label = String.valueOf(app.label).toLowerCase(Locale.getDefault());
             if (q.length() > 0 && !label.contains(q)) {
@@ -1046,6 +1499,120 @@ public class LauncherActivity extends Activity {
             container.addView(buildResultRow(app));
             shown++;
         }
+
+        // Always offer a web search for the typed text.
+        if (raw.length() > 0) {
+            container.addView(buildWebRow(raw));
+        }
+    }
+
+    private View buildCalcRow(final String expr, double value) {
+        final String result = formatNumber(value);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(6), dp(10), dp(6), dp(10));
+
+        TextView equals = new TextView(this);
+        equals.setText("=");
+        equals.setTextColor(Color.parseColor("#0A84FF"));
+        equals.setTextSize(26f);
+        equals.setGravity(Gravity.CENTER);
+        equals.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        row.addView(equals, new LinearLayout.LayoutParams(dp(42), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        TextView res = new TextView(this);
+        res.setText(result);
+        res.setTextColor(Color.WHITE);
+        res.setTextSize(24f);
+        res.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        res.setSingleLine(true);
+        res.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        col.addView(res);
+        TextView sub = new TextView(this);
+        sub.setText(expr + "   ·   tap to copy");
+        sub.setTextColor(Color.parseColor("#99FFFFFF"));
+        sub.setTextSize(13f);
+        col.addView(sub);
+        LinearLayout.LayoutParams colLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        colLp.leftMargin = dp(10);
+        row.addView(col, colLp);
+
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                try {
+                    ClipboardManager cm =
+                            (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                    cm.setPrimaryClip(ClipData.newPlainText("result", result));
+                } catch (Exception ignored) {
+                }
+            }
+        });
+        return row;
+    }
+
+    private View buildWebRow(final String query) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(6), dp(12), dp(6), dp(12));
+
+        TextView glyph = new TextView(this);
+        glyph.setText("🔍");
+        glyph.setTextSize(18f);
+        glyph.setGravity(Gravity.CENTER);
+        row.addView(glyph, new LinearLayout.LayoutParams(dp(42), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView label = new TextView(this);
+        label.setText("Search the web for “" + query + "”");
+        label.setTextColor(Color.WHITE);
+        label.setTextSize(16f);
+        label.setSingleLine(true);
+        label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        lp.leftMargin = dp(10);
+        row.addView(label, lp);
+
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                hideSpotlight();
+                webSearch(query);
+            }
+        });
+        return row;
+    }
+
+    private void webSearch(String query) {
+        try {
+            Intent i = new Intent(Intent.ACTION_WEB_SEARCH);
+            i.putExtra(SearchManager.QUERY, query);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        } catch (Exception e) {
+            try {
+                Intent v = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
+                        "https://www.google.com/search?q=" + android.net.Uri.encode(query)));
+                v.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(v);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private String formatNumber(double value) {
+        if (value == Math.floor(value) && !Double.isInfinite(value)
+                && Math.abs(value) < 1e15) {
+            return String.valueOf((long) value);
+        }
+        String s = String.valueOf(value);
+        return s;
     }
 
     private View buildResultRow(final AppInfo app) {
