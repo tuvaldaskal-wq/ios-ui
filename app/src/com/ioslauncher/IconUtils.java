@@ -5,71 +5,75 @@ import android.graphics.BitmapShader;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.PorterDuff;
-import android.graphics.PorterDuffXfermode;
-import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Shader;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 
 /**
- * Renders any app icon into the iOS "squircle" style: a rounded square with a
- * subtle inner background so transparent legacy icons still read as tiles.
+ * Renders any Android app icon into a flat iOS "squircle" tile:
+ *   - Adaptive icons are drawn full-bleed and masked to the rounded square,
+ *     which is exactly how iOS presents its icons.
+ *   - Legacy icons (with transparent padding) are centred on a white tile so
+ *     they still read as solid iOS-style tiles instead of floating glyphs.
+ * No strokes, no drop shadow - iOS home-screen icons are perfectly flat.
  */
 public final class IconUtils {
 
     private IconUtils() {}
 
-    public static BitmapDrawable makeIosIcon(Drawable src, int sizePx) {
-        int size = sizePx;
-        float radius = size * 0.225f; // iOS continuous-corner ratio approximation
+    // iOS continuous-corner radius approximated with a circular corner.
+    private static final float CORNER_RATIO = 0.2237f;
 
-        // 1. Flatten the source drawable onto a tile-sized bitmap.
+    public static BitmapDrawable makeIosIcon(Drawable src, int sizePx) {
+        int size = Math.max(1, sizePx);
+        float radius = size * CORNER_RATIO;
+
         Bitmap raw = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
         Canvas rawCanvas = new Canvas(raw);
-        if (src != null) {
-            // Inset slightly so adaptive/legacy icons fill the tile nicely.
-            int inset = Math.round(size * 0.06f);
-            src.setBounds(inset, inset, size - inset, size - inset);
-            // Fill behind transparent icons with a soft light tile.
-            if (hasTransparentEdges(src)) {
-                Paint bg = new Paint(Paint.ANTI_ALIAS_FLAG);
-                bg.setColor(Color.parseColor("#F2F2F7"));
-                rawCanvas.drawRect(0, 0, size, size, bg);
+
+        boolean adaptive = src != null
+                && src.getClass().getName().equals("android.graphics.drawable.AdaptiveIconDrawable");
+
+        if (src == null) {
+            rawCanvas.drawColor(Color.parseColor("#E5E5EA"));
+        } else if (adaptive) {
+            // Full-bleed: the adaptive layers are designed to be clipped by the mask.
+            src.setBounds(0, 0, size, size);
+            src.draw(rawCanvas);
+        } else {
+            // Legacy icon: white tile + centred artwork.
+            rawCanvas.drawColor(Color.WHITE);
+            int iw = src.getIntrinsicWidth();
+            int ih = src.getIntrinsicHeight();
+            float scale;
+            if (iw > 0 && ih > 0) {
+                scale = (size * 0.86f) / Math.max(iw, ih);
+            } else {
+                scale = 0.86f;
+                iw = size;
+                ih = size;
             }
+            int dw = Math.round(iw * scale);
+            int dh = Math.round(ih * scale);
+            int left = (size - dw) / 2;
+            int top = (size - dh) / 2;
+            src.setBounds(left, top, left + dw, top + dh);
             src.draw(rawCanvas);
         }
 
-        // 2. Clip into a rounded-rect output.
+        // Mask into an anti-aliased rounded square.
         Bitmap out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(out);
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         paint.setShader(new BitmapShader(raw, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP));
-        RectF rect = new RectF(0, 0, size, size);
-        canvas.drawRoundRect(rect, radius, radius, paint);
-
-        // 3. Thin highlight stroke for depth.
-        Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
-        stroke.setStyle(Paint.Style.STROKE);
-        stroke.setColor(Color.parseColor("#1AFFFFFF"));
-        stroke.setStrokeWidth(Math.max(1f, size * 0.012f));
-        float h = stroke.getStrokeWidth() / 2f;
-        canvas.drawRoundRect(new RectF(h, h, size - h, size - h), radius, radius, stroke);
+        canvas.drawRoundRect(new RectF(0, 0, size, size), radius, radius, paint);
 
         raw.recycle();
         return new BitmapDrawable(out);
     }
 
-    private static boolean hasTransparentEdges(Drawable d) {
-        // Heuristic: many legacy launcher icons are non-square / have transparent
-        // margins. Treat anything that isn't an opaque bitmap as needing a tile.
-        return d.getOpacity() != android.graphics.PixelFormat.OPAQUE;
-    }
-
-    /** Convert dp to device pixels. */
     public static int dp(android.content.Context ctx, float dp) {
-        float density = ctx.getResources().getDisplayMetrics().density;
-        return Math.round(dp * density);
+        return Math.round(dp * ctx.getResources().getDisplayMetrics().density);
     }
 }

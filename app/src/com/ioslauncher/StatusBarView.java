@@ -31,7 +31,7 @@ public class StatusBarView extends View {
 
         textPaint.setColor(Color.WHITE);
         textPaint.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
-        textPaint.setTextSize(15 * density);
+        textPaint.setTextSize(16 * density);
 
         fillPaint.setColor(Color.WHITE);
         fillPaint.setStyle(Paint.Style.FILL);

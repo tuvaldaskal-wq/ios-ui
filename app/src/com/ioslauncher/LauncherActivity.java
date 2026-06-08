@@ -12,12 +12,17 @@ import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.os.BatteryManager;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.text.SimpleDateFormat;
@@ -41,6 +46,9 @@ public class LauncherActivity extends Activity {
     private StatusBarView statusBar;
     private PagedScrollView pager;
     private LinearLayout dotsRow;
+    private FrameLayout rootView;
+    private View spotlightOverlay;
+    private List<AppInfo> allApps = new ArrayList<AppInfo>();
     private final List<View> dots = new ArrayList<View>();
     private final SimpleDateFormat clockFmt = new SimpleDateFormat("h:mm", Locale.getDefault());
 
@@ -107,6 +115,10 @@ public class LauncherActivity extends Activity {
     /** As a HOME app, pressing back should stay on the home screen. */
     @Override
     public void onBackPressed() {
+        if (spotlightOverlay != null) {
+            hideSpotlight();
+            return;
+        }
         if (pager != null && pager.getCurrentPage() != 0) {
             pager.snapToPage(0);
         }
@@ -129,6 +141,7 @@ public class LauncherActivity extends Activity {
 
     private View buildUi() {
         FrameLayout root = new FrameLayout(this);
+        rootView = root;
         root.setBackgroundResource(R.drawable.ios_wallpaper);
 
         LinearLayout column = new LinearLayout(this);
@@ -145,6 +158,7 @@ public class LauncherActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(26)));
 
         List<AppInfo> apps = loadApps();
+        allApps = apps;
         List<AppInfo> dockApps = new ArrayList<AppInfo>();
         List<AppInfo> gridApps = new ArrayList<AppInfo>();
         for (int i = 0; i < apps.size(); i++) {
@@ -312,6 +326,12 @@ public class LauncherActivity extends Activity {
         pill.setGravity(Gravity.CENTER);
         pill.setBackgroundResource(R.drawable.search_pill);
         pill.setPadding(dp(16), dp(7), dp(16), dp(7));
+        pill.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showSpotlight();
+            }
+        });
 
         LinearLayout holder = new LinearLayout(this);
         holder.setGravity(Gravity.CENTER);
@@ -348,6 +368,134 @@ public class LauncherActivity extends Activity {
             dots.get(i).setBackgroundResource(i == active
                     ? R.drawable.page_dot_active : R.drawable.page_dot);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Spotlight search
+    // ------------------------------------------------------------------
+
+    private void showSpotlight() {
+        if (spotlightOverlay != null) {
+            return;
+        }
+        FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(android.graphics.Color.parseColor("#D9000000"));
+        overlay.setClickable(true);
+        overlay.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                hideSpotlight();
+            }
+        });
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(16), getStatusBarHeight() + dp(18), dp(16), dp(16));
+
+        final EditText field = new EditText(this);
+        field.setHint("Search");
+        field.setSingleLine(true);
+        field.setText("");
+        field.setTextColor(android.graphics.Color.WHITE);
+        field.setHintTextColor(android.graphics.Color.parseColor("#99FFFFFF"));
+        field.setTextSize(17f);
+        field.setBackgroundResource(R.drawable.search_pill);
+        field.setPadding(dp(16), dp(11), dp(16), dp(11));
+
+        final LinearLayout results = new LinearLayout(this);
+        results.setOrientation(LinearLayout.VERTICAL);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(results);
+
+        populateResults(results, "");
+        field.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+                populateResults(results, s.toString());
+            }
+            @Override
+            public void afterTextChanged(Editable s) { }
+        });
+
+        panel.addView(field, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+        scrollLp.topMargin = dp(12);
+        panel.addView(scroll, scrollLp);
+
+        overlay.addView(panel, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        rootView.addView(overlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        spotlightOverlay = overlay;
+
+        field.requestFocus();
+        InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (imm != null) {
+            imm.showSoftInput(field, InputMethodManager.SHOW_IMPLICIT);
+        }
+    }
+
+    private void hideSpotlight() {
+        if (spotlightOverlay == null) {
+            return;
+        }
+        InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (imm != null) {
+            imm.hideSoftInputFromWindow(spotlightOverlay.getWindowToken(), 0);
+        }
+        rootView.removeView(spotlightOverlay);
+        spotlightOverlay = null;
+    }
+
+    private void populateResults(LinearLayout container, String query) {
+        container.removeAllViews();
+        String q = query.trim().toLowerCase(Locale.getDefault());
+        int shown = 0;
+        for (int i = 0; i < allApps.size() && shown < 60; i++) {
+            final AppInfo app = allApps.get(i);
+            String label = String.valueOf(app.label).toLowerCase(Locale.getDefault());
+            if (q.length() > 0 && !label.contains(q)) {
+                continue;
+            }
+            container.addView(buildResultRow(app));
+            shown++;
+        }
+    }
+
+    private View buildResultRow(final AppInfo app) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(6), dp(8), dp(6), dp(8));
+
+        ImageView icon = new ImageView(this);
+        int s = dp(42);
+        icon.setImageDrawable(IconUtils.makeIosIcon(app.icon, s));
+        row.addView(icon, new LinearLayout.LayoutParams(s, s));
+
+        TextView label = new TextView(this);
+        label.setText(app.label);
+        label.setTextColor(android.graphics.Color.WHITE);
+        label.setTextSize(17f);
+        label.setSingleLine(true);
+        label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        lp.leftMargin = dp(14);
+        row.addView(label, lp);
+
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                hideSpotlight();
+                launchApp(app);
+            }
+        });
+        return row;
     }
 
     // ------------------------------------------------------------------
