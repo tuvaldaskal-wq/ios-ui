@@ -15,10 +15,11 @@ MIN_SDK=21
 TARGET_SDK=34
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-APP="$ROOT/app"
+APP="$ROOT/app/src/main"
 BUILD="$ROOT/build"
 OUT="$ROOT/dist"
 KEYSTORE="$ROOT/debug.keystore"
+PACKAGE="com.aiassistant"
 
 # Ensure a secrets.xml exists (gitignored). Falls back to the example.
 if [ ! -f "$APP/res/values/secrets.xml" ]; then
@@ -29,6 +30,11 @@ fi
 rm -rf "$BUILD"
 mkdir -p "$BUILD/compiled" "$BUILD/gen" "$BUILD/classes" "$OUT"
 
+# The manifest (Gradle-style) has no package attribute; aapt2 needs one.
+# Inject it into a temporary copy so this offline build keeps working.
+sed "s|<manifest |<manifest package=\"$PACKAGE\" |" \
+    "$APP/AndroidManifest.xml" > "$BUILD/AndroidManifest.xml"
+
 echo "==> [1/6] aapt2 compile resources"
 "$AAPT2" compile --dir "$APP/res" -o "$BUILD/compiled/res.zip"
 
@@ -36,7 +42,7 @@ echo "==> [2/6] aapt2 link"
 "$AAPT2" link \
     -o "$BUILD/base.apk" \
     -I "$ANDROID_JAR" \
-    --manifest "$APP/AndroidManifest.xml" \
+    --manifest "$BUILD/AndroidManifest.xml" \
     --java "$BUILD/gen" \
     --min-sdk-version "$MIN_SDK" \
     --target-sdk-version "$TARGET_SDK" \
@@ -44,7 +50,7 @@ echo "==> [2/6] aapt2 link"
     "$BUILD/compiled/res.zip"
 
 echo "==> [3/6] javac"
-SRCS=$(find "$APP/src" "$BUILD/gen" -name '*.java')
+SRCS=$(find "$APP/java" "$BUILD/gen" -name '*.java')
 javac --release 8 -XDstringConcat=inline -encoding UTF-8 \
     -classpath "$ANDROID_JAR" -d "$BUILD/classes" $SRCS
 

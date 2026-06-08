@@ -3,11 +3,11 @@ package com.aiassistant;
 import android.content.Context;
 
 /**
- * Reads configuration from the (gitignored) secrets.xml resource.
+ * Reads configuration from the (gitignored) secrets.xml resource — the API key
+ * is hardcoded there at build time.
  *
- * Public/paid build: leave the api key empty and set backend_url to your
- * server (which holds the key and verifies the subscription).
- * Local/free build: put the key directly in anthropic_api_key.
+ * Public/paid build: leave the key empty and set backend_url to your server
+ * (which holds the key and verifies the subscription).
  */
 public final class Config {
 
@@ -18,7 +18,7 @@ public final class Config {
     public Config(Context ctx) {
         apiKey = str(ctx, "anthropic_api_key");
         String m = str(ctx, "anthropic_model");
-        model = m.isEmpty() ? "claude-sonnet-4-6" : m;
+        model = m.isEmpty() ? "claude-haiku-4-5" : m;
         backendUrl = str(ctx, "backend_url");
     }
 
