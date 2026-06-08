@@ -1,0 +1,65 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Read secrets from local.properties (gitignored) so they never get committed.
+// Falls back to empty/defaults, so the project always builds out of the box.
+def localProps = new Properties()
+def localFile = rootProject.file("local.properties")
+if (localFile.exists()) {
+    localFile.withInputStream { localProps.load(it) }
+}
+def anthropicKey = localProps.getProperty("ANTHROPIC_API_KEY", "")
+def anthropicModel = localProps.getProperty("ANTHROPIC_MODEL", "claude-haiku-4-5")
+def backendUrl = localProps.getProperty("BACKEND_URL", "")
+// Google Play Billing. Keep BILLING_ENABLED false until your Play subscription
+// product exists; set SUB_PRODUCT_ID to that product's id (e.g. "aria_premium").
+def billingEnabled = localProps.getProperty("BILLING_ENABLED", "false")
+def subProductId = localProps.getProperty("SUB_PRODUCT_ID", "aria_premium")
+// Supabase (email/password login + admin). Leave empty to run without accounts.
+def supabaseUrl = localProps.getProperty("SUPABASE_URL", "")
+def supabaseAnonKey = localProps.getProperty("SUPABASE_ANON_KEY", "")
+
+android {
+    namespace 'com.aiassistant'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.aiassistant"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+
+        buildConfigField "String", "ANTHROPIC_API_KEY", "\"${anthropicKey}\""
+        buildConfigField "String", "ANTHROPIC_MODEL", "\"${anthropicModel}\""
+        buildConfigField "String", "BACKEND_URL", "\"${backendUrl}\""
+        buildConfigField "boolean", "BILLING_ENABLED", "${billingEnabled}"
+        buildConfigField "String", "SUB_PRODUCT_ID", "\"${subProductId}\""
+        buildConfigField "String", "SUPABASE_URL", "\"${supabaseUrl}\""
+        buildConfigField "String", "SUPABASE_ANON_KEY", "\"${supabaseAnonKey}\""
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    buildTypes {
+        debug {
+            // Debug build — installs with the default debug signing key.
+        }
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // Google Play Billing (subscriptions). Resolved by Android Studio.
+    implementation 'com.android.billingclient:billing:6.2.1'
+}

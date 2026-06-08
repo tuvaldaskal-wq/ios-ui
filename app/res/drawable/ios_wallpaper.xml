@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- iOS-style abstract wallpaper: deep gradient base with soft colour blobs. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Base vertical gradient -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="linear"
+                android:angle="270"
+                android:startColor="#FF0B1030"
+                android:centerColor="#FF241A52"
+                android:endColor="#FF3A1C5E" />
+        </shape>
+    </item>
+
+    <!-- Purple glow, upper-left -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="radial"
+                android:centerX="0.18"
+                android:centerY="0.12"
+                android:gradientRadius="360dp"
+                android:startColor="#995B2A86"
+                android:endColor="#005B2A86" />
+        </shape>
+    </item>
+
+    <!-- Blue glow, centre-right -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="radial"
+                android:centerX="0.82"
+                android:centerY="0.42"
+                android:gradientRadius="340dp"
+                android:startColor="#772E6CC9"
+                android:endColor="#002E6CC9" />
+        </shape>
+    </item>
+
+    <!-- Magenta glow, lower area -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="radial"
+                android:centerX="0.55"
+                android:centerY="0.95"
+                android:gradientRadius="400dp"
+                android:startColor="#88C0397E"
+                android:endColor="#00C0397E" />
+        </shape>
+    </item>
+
+</layer-list>
