@@ -31,6 +31,8 @@ public class ChatActivity extends Activity {
     private Agent agent;
     private TextToSpeech tts;
     private boolean ttsReady;
+    private Avatar avatar;
+    private View headerOrb;
 
     private ScrollView scroll;
     private LinearLayout messages;
@@ -44,6 +46,7 @@ public class ChatActivity extends Activity {
         super.onCreate(savedInstanceState);
         config = new Config(this);
         agent = new Agent(this, config);
+        avatar = AvatarPrefs.get(this);
         setContentView(buildUi());
 
         tts = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
@@ -119,11 +122,18 @@ public class ChatActivity extends Activity {
         header.setPadding(dp(18), dp(12), dp(18), dp(12));
 
         View orb = new View(this);
-        orb.setBackgroundResource(R.drawable.orb);
+        orb.setBackground(avatar.makeDrawable(this, 40));
         orb.setElevation(dp(4));
+        orb.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new Intent(ChatActivity.this, AvatarActivity.class));
+            }
+        });
         LinearLayout.LayoutParams orbLp = new LinearLayout.LayoutParams(dp(40), dp(40));
         orbLp.rightMargin = dp(12);
         header.addView(orb, orbLp);
+        headerOrb = orb;
 
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
@@ -315,7 +325,7 @@ public class ChatActivity extends Activity {
 
     private View makeAvatar() {
         View a = new View(this);
-        a.setBackgroundResource(R.drawable.orb);
+        a.setBackground(avatar.makeDrawable(this, 28));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(28), dp(28));
         lp.topMargin = dp(2);
         a.setLayoutParams(lp);
@@ -467,6 +477,18 @@ public class ChatActivity extends Activity {
             if (res != null && !res.isEmpty()) {
                 input.setText(res.get(0));
                 sendCurrent();
+            }
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        Avatar fresh = AvatarPrefs.get(this);
+        if (!fresh.id.equals(avatar.id)) {
+            avatar = fresh;
+            if (headerOrb != null) {
+                headerOrb.setBackground(avatar.makeDrawable(this, 40));
             }
         }
     }

@@ -30,6 +30,7 @@ public class OrbView extends View {
     private float displayed = 0.12f;   // smoothed level actually drawn
     private double phase = 0;
     private long startTime = System.currentTimeMillis();
+    private Avatar avatar = Avatar.AURORA;
 
     public OrbView(Context context) {
         super(context);
@@ -37,6 +38,15 @@ public class OrbView extends View {
 
     public void setState(int s) {
         this.state = s;
+        invalidate();
+    }
+
+    /** Change the orb's color scheme (Aria's "look"). */
+    public void setAvatar(Avatar a) {
+        if (a == null) {
+            return;
+        }
+        this.avatar = a;
         invalidate();
     }
 
@@ -86,8 +96,8 @@ public class OrbView extends View {
         float glowR = base * 2.6f * (1f + displayed * 0.25f);
         glowPaint.setShader(new RadialGradient(cx, cy, glowR,
                 new int[]{
-                        withAlpha(0xFF7DD3FC, (int) (120 + 120 * displayed)),
-                        withAlpha(0xFF6D5DF6, 80),
+                        withAlpha(avatar.glowPrimary, (int) (120 + 120 * displayed)),
+                        withAlpha(avatar.glowSecondary, 80),
                         0x00000000},
                 new float[]{0f, 0.5f, 1f}, Shader.TileMode.CLAMP));
         canvas.drawCircle(cx, cy, glowR, glowPaint);
@@ -112,7 +122,7 @@ public class OrbView extends View {
         path.close();
 
         blobPaint.setShader(new RadialGradient(cx - base * 0.3f, cy - base * 0.3f, base * 1.8f,
-                new int[]{0xFFBFE3FF, 0xFF5B8DEF, 0xFF7C3AED},
+                new int[]{avatar.blobHighlight, avatar.blobMid, avatar.blobDark},
                 new float[]{0f, 0.55f, 1f}, Shader.TileMode.CLAMP));
         canvas.drawPath(path, blobPaint);
 

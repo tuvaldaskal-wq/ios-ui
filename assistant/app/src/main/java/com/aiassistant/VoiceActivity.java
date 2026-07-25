@@ -30,6 +30,7 @@ public class VoiceActivity extends Activity {
     private Agent agent;
     private TextToSpeech tts;
     private boolean ttsReady;
+    private Avatar avatar;
 
     private OrbView orb;
     private TextView caption;
@@ -54,6 +55,7 @@ public class VoiceActivity extends Activity {
 
         config = new Config(this);
         agent = new Agent(this, config);
+        avatar = AvatarPrefs.get(this);
         setContentView(buildUi());
         setupGate();
 
@@ -108,6 +110,15 @@ public class VoiceActivity extends Activity {
         maybeStartFromAssist(intent);
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (orb != null) {
+            avatar = AvatarPrefs.get(this);
+            orb.setAvatar(avatar);
+        }
+    }
+
     /** When opened via the long-press assist gesture, begin listening right away. */
     private void maybeStartFromAssist(Intent intent) {
         if (intent == null || !intent.getBooleanExtra(EXTRA_FROM_ASSIST, false)) {
@@ -147,6 +158,7 @@ public class VoiceActivity extends Activity {
         root.setFitsSystemWindows(true);
 
         orb = new OrbView(this);
+        orb.setAvatar(avatar);
         int size = (int) (getResources().getDisplayMetrics().widthPixels * 0.8);
         FrameLayout.LayoutParams orbLp = new FrameLayout.LayoutParams(size, size);
         orbLp.gravity = Gravity.CENTER;
@@ -190,6 +202,16 @@ public class VoiceActivity extends Activity {
         });
         root.addView(keyboard);
 
+        // Avatar button → pick Aria's look
+        TextView avatarBtn = corner("🎨", Gravity.TOP | Gravity.START, dp(14));
+        avatarBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new Intent(VoiceActivity.this, AvatarActivity.class));
+            }
+        });
+        root.addView(avatarBtn);
+
         return root;
     }
 
@@ -204,6 +226,7 @@ public class VoiceActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.gravity = gravity;
         lp.topMargin = margin;
+        lp.leftMargin = margin;
         lp.rightMargin = margin;
         t.setLayoutParams(lp);
         return t;
@@ -436,7 +459,7 @@ public class VoiceActivity extends Activity {
         p.setPadding(dp(32), dp(32), dp(32), dp(32));
 
         View orbIcon = new View(this);
-        orbIcon.setBackgroundResource(R.drawable.orb);
+        orbIcon.setBackground(avatar.makeDrawable(this, 84));
         LinearLayout.LayoutParams oi = new LinearLayout.LayoutParams(dp(84), dp(84));
         oi.bottomMargin = dp(20);
         p.addView(orbIcon, oi);
